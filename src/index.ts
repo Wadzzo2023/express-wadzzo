@@ -50,7 +50,7 @@ app.use("/jobs", limiter);
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/health", healthRouter);
-app.use("/jobs", authenticate, jobsRouter);
+app.use("/jobs", jobsRouter);
 
 // 404
 app.use((_req, res) => {
