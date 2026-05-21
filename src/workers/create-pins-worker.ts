@@ -108,6 +108,10 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
                     status: completed === pins.length ? "completed" : "processing",
                 },
             });
+
+            if (completed % 10 === 0 && completed < pins.length) {
+                await new Promise((resolve) => setTimeout(resolve, 4000));
+            }
         }
     }
 
