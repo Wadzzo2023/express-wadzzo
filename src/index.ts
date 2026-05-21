@@ -14,7 +14,7 @@ import healthRouter from "./routes/health.js";
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? "4000", 10);
-
+app.set("trust proxy", 1);
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment */
 const helmetMw = helmet() as RequestHandler;
 
@@ -44,7 +44,7 @@ const limiter = rateLimit({
 
 app.use(helmetMw);
 app.use(corsMw);
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json());
 app.use(morganMw);
 app.use("/jobs", limiter);
 

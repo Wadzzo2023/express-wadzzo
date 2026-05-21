@@ -1352,71 +1352,71 @@ export const createDbTools = (creatorId: string) => {
     );
 
     // ── TOOL 20: pause_hotspot ────────────────────────────────────────────────
-    const pauseHotspot = tool(
-        async ({ hotspotId }) => {
-            const h = await db.hotspot.findFirst({ where: { id: hotspotId, creatorId } });
-            if (!h) return JSON.stringify({ ok: false, error: "Not found" });
+    // const pauseHotspot = tool(
+    //     async ({ hotspotId }) => {
+    //         const h = await db.hotspot.findFirst({ where: { id: hotspotId, creatorId } });
+    //         if (!h) return JSON.stringify({ ok: false, error: "Not found" });
 
-            if (h.qstashScheduleId)
-                await qstash.schedules.pause({ schedule: h.qstashScheduleId }).catch(() => null);
+    //         if (h.qstashScheduleId)
+    //             await qstash.schedules.pause({ schedule: h.qstashScheduleId }).catch(() => null);
 
-            await db.hotspot.update({ where: { id: hotspotId }, data: { isActive: false } });
-            return JSON.stringify({ ok: true });
-        },
-        {
-            name: "pause_hotspot",
-            description: "Pause hotspot schedule. Stops future drops. Existing pins unaffected.",
-            schema: z.object({ hotspotId: z.string() }),
-        }
-    );
+    //         await db.hotspot.update({ where: { id: hotspotId }, data: { isActive: false } });
+    //         return JSON.stringify({ ok: true });
+    //     },
+    //     {
+    //         name: "pause_hotspot",
+    //         description: "Pause hotspot schedule. Stops future drops. Existing pins unaffected.",
+    //         schema: z.object({ hotspotId: z.string() }),
+    //     }
+    // );
 
     // ── TOOL 21: resume_hotspot ───────────────────────────────────────────────
-    const resumeHotspot = tool(
-        async ({ hotspotId }) => {
-            const h = await db.hotspot.findFirst({ where: { id: hotspotId, creatorId } });
-            if (!h) return JSON.stringify({ ok: false, error: "Not found" });
-            if (!h.qstashScheduleId)
-                return JSON.stringify({ ok: false, error: "Schedule permanently removed. Cannot resume." });
+    // const resumeHotspot = tool(
+    //     async ({ hotspotId }) => {
+    //         const h = await db.hotspot.findFirst({ where: { id: hotspotId, creatorId } });
+    //         if (!h) return JSON.stringify({ ok: false, error: "Not found" });
+    //         if (!h.qstashScheduleId)
+    //             return JSON.stringify({ ok: false, error: "Schedule permanently removed. Cannot resume." });
 
-            await qstash.schedules.resume({ schedule: h.qstashScheduleId }).catch(() => null);
-            await db.hotspot.update({ where: { id: hotspotId }, data: { isActive: true } });
-            return JSON.stringify({ ok: true });
-        },
-        {
-            name: "resume_hotspot",
-            description: "Resume a paused hotspot schedule. Fails if hotspot was deleted.",
-            schema: z.object({ hotspotId: z.string() }),
-        }
-    );
+    //         await qstash.schedules.resume({ schedule: h.qstashScheduleId }).catch(() => null);
+    //         await db.hotspot.update({ where: { id: hotspotId }, data: { isActive: true } });
+    //         return JSON.stringify({ ok: true });
+    //     },
+    //     {
+    //         name: "resume_hotspot",
+    //         description: "Resume a paused hotspot schedule. Fails if hotspot was deleted.",
+    //         schema: z.object({ hotspotId: z.string() }),
+    //     }
+    // );
 
     // ── TOOL 22: delete_hotspot ───────────────────────────────────────────────
-    const deleteHotspot = tool(
-        async ({ hotspotId }) => {
-            const h = await db.hotspot.findFirst({ where: { id: hotspotId, creatorId } });
-            if (!h) return JSON.stringify({ ok: false, error: "Not found" });
+    // const deleteHotspot = tool(
+    //     async ({ hotspotId }) => {
+    //         const h = await db.hotspot.findFirst({ where: { id: hotspotId, creatorId } });
+    //         if (!h) return JSON.stringify({ ok: false, error: "Not found" });
 
-            // Cancel QStash schedule first
-            if (h.qstashScheduleId) {
-                await qstash.schedules.pause({ schedule: h.qstashScheduleId }).catch(() => null);
-                await qstash.schedules.delete(h.qstashScheduleId).catch(e =>
-                    console.warn("[deleteHotspot] QStash delete failed:", e)
-                );
-            }
+    //         // Cancel QStash schedule first
+    //         if (h.qstashScheduleId) {
+    //             await qstash.schedules.pause({ schedule: h.qstashScheduleId }).catch(() => null);
+    //             await qstash.schedules.delete(h.qstashScheduleId).catch(e =>
+    //                 console.warn("[deleteHotspot] QStash delete failed:", e)
+    //             );
+    //         }
 
-            // Soft-delete all linked drops + mark hotspot inactive
-            await db.locationGroup.updateMany({ where: { hotspotId }, data: { hidden: true } });
-            await db.hotspot.update({ where: { id: hotspotId }, data: { isActive: false } });
+    //         // Soft-delete all linked drops + mark hotspot inactive
+    //         await db.locationGroup.updateMany({ where: { hotspotId }, data: { hidden: true } });
+    //         await db.hotspot.update({ where: { id: hotspotId }, data: { isActive: false } });
 
-            return JSON.stringify({ ok: true });
-        },
-        {
-            name: "delete_hotspot",
-            description:
-                "Delete a hotspot. Cancels QStash schedule and soft-deletes all linked LocationGroups. " +
-                "Hotspot row stays in DB (isActive=false). Cannot be undone.",
-            schema: z.object({ hotspotId: z.string() }),
-        }
-    );
+    //         return JSON.stringify({ ok: true });
+    //     },
+    //     {
+    //         name: "delete_hotspot",
+    //         description:
+    //             "Delete a hotspot. Cancels QStash schedule and soft-deletes all linked LocationGroups. " +
+    //             "Hotspot row stays in DB (isActive=false). Cannot be undone.",
+    //         schema: z.object({ hotspotId: z.string() }),
+    //     }
+    // );
 
     // ── Return all tools ──────────────────────────────────────────────────────
     return [
@@ -1446,8 +1446,8 @@ export const createDbTools = (creatorId: string) => {
         deletePins,              // 18
         deleteLocation,          // 19
         // Write — hotspots
-        pauseHotspot,            // 20
-        resumeHotspot,           // 21
-        deleteHotspot,           // 22
+        // pauseHotspot,            // 20
+        // resumeHotspot,           // 21
+        // deleteHotspot,           // 22
     ];
 };
