@@ -31,25 +31,25 @@ export function authenticate(
 ): void {
     // ── Option A: Bearer JWT ──────────────────────────────────────────────────
     const authHeader = req.headers.authorization;
+    logger.info("[auth] Auth attempt, Authorization header present:", !!authHeader);
     if (authHeader?.startsWith("Bearer ")) {
         const token = authHeader.slice(7);
         try {
             if (!SECRET) throw new Error("No secret configured");
             const payload = jwt.verify(token, SECRET) as AuthenticatedRequest["authPayload"];
             req.authPayload = payload;
+            logger.debug("[auth] JWT verified successfully");
             return next();
         } catch (err) {
-            logger.debug("[auth] JWT verify failed:", err instanceof Error ? err.message : err);
+            logger.debug(`[auth] JWT verify failed: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
-    // ── Option B: static X-Api-Key header (same as NEXTAUTH_SECRET) ──────────
     const apiKey = req.headers["x-api-key"];
-    logger.info("[auth] API key auth attempt, key present:", apiKey);
     if (apiKey && apiKey === SECRET) {
         req.authPayload = { sub: "static-key" };
+        logger.debug("[auth] Static API key auth successful");
         return next();
     }
-
     res.status(401).json({ error: "Unauthorized", hint: "Provide Authorization: Bearer <jwt> or X-Api-Key header" });
 }

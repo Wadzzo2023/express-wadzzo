@@ -546,10 +546,10 @@ model Hotspot {
 
     // QStash
     qstashScheduleId String?
-    isActive         Boolean @default(true)
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    isActive         Boolean  @default(true)
+    hidden           Boolean  @default(false)
+    createdAt        DateTime @default(now())
+    updatedAt        DateTime @updatedAt
 
     locationGroups LocationGroup[]
 }

@@ -239,7 +239,7 @@ export async function dbPresenceCheck(
 
         if (hotspotIds.length > 0) {
             const hotspots = await db.hotspot.findMany({
-                where: { id: { in: hotspotIds }, creatorId },
+                where: { id: { in: hotspotIds }, creatorId, hidden: false },
                 select: {
                     locationGroups: {
                         orderBy: { createdAt: "asc" },

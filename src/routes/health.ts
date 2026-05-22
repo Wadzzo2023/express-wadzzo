@@ -1,6 +1,7 @@
 // src/routes/health.ts
 import { Router, type IRouter } from "express";
 import { listJobs } from "../lib/job-store.js";
+import { hotspotScheduler } from "../lib/hotspot-scheduler.js";
 
 const router: IRouter = Router();
 
@@ -21,6 +22,7 @@ router.get("/", (_req, res) => {
         uptime: process.uptime(),
         memory: process.memoryUsage(),
         jobs: counts,
+        hotspotSchedules: hotspotScheduler.count(),
         timestamp: new Date().toISOString(),
     });
 });

@@ -5,6 +5,7 @@ import { markProcessing, markCompleted, markFailed, addLog, getJob } from "../li
 import { logger } from "../lib/logger.js";
 import { runAgentJob } from "./agent-worker.js";
 import { runCreatePinsJob } from "./create-pins-worker.js";
+
 const MAX_CONCURRENT = parseInt(process.env.WORKER_CONCURRENCY ?? "5", 10);
 let running = 0;
 const queue: (() => void)[] = [];
@@ -24,7 +25,7 @@ function releaseSlot(): void {
 
 export async function enqueueJob(job: Job): Promise<void> {
     await acquireSlot();
-    const timeout = parseInt(process.env.JOB_TIMEOUT_MS ?? "120000", 10);
+    const timeout = parseInt(process.env.JOB_TIMEOUT_MS ?? "300000", 10);
 
     try {
         const j = markProcessing(job.id);
