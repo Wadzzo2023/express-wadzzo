@@ -45,6 +45,7 @@ export function authenticate(
 
     // ── Option B: static X-Api-Key header (same as NEXTAUTH_SECRET) ──────────
     const apiKey = req.headers["x-api-key"];
+    logger.info("[auth] API key auth attempt, key present:", apiKey);
     if (apiKey && apiKey === SECRET) {
         req.authPayload = { sub: "static-key" };
         return next();

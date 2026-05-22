@@ -216,7 +216,7 @@ export const createDbTools = (creatorId: string) => {
             const filtered = area && geoFilter
                 ? pins.filter(p =>
                     p.latitude != null && p.longitude != null &&
-                    haversineKm(p.latitude, p.longitude, geoFilter!.latitude.gte + (_radiusKm / 111), geoFilter!.longitude.gte + (_radiusKm / 111)) <= _radiusKm
+                    haversineKm(p.latitude, p.longitude, geoFilter.latitude.gte + (_radiusKm / 111), geoFilter.longitude.gte + (_radiusKm / 111)) <= _radiusKm
                 )
                 : pins;
 
