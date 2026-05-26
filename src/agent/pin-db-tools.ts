@@ -16,7 +16,7 @@ import { db } from "../lib/db";
  * Hotspot routes are internal-only and require no auth token.
  * creatorId is passed in the request body for ownership scoping.
  */
-const INTERNAL_API_BASE = process.env.INTERNAL_API_BASE ?? "http://localhost:4000";
+const INTERNAL_API_BASE = process.env.EXPRESS_SERVER_URL ?? "http://localhost:4000";
 
 /**
  * Call the hotspot REST API — no auth header needed.
