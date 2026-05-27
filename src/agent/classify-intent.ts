@@ -299,6 +299,33 @@ export async function resolveRoute(
 
     const { intent, confidence, extractedSubject } = classification;
 
+    // Quick UI-action shortcut: if the user's last message is a direct
+    // selection from a clarification widget (e.g. "Find more & add to collection",
+    // "Show my existing pins"), treat it as the intended route so we don't
+    // loop back into clarification when the client doesn't re-send preserved intent.
+    try {
+        const last = messages?.length ? (messages[messages.length - 1].text ?? "").toLowerCase().trim() : "";
+        if (last) {
+            if (
+                last.includes("find more") ||
+                last.includes("find new locations") ||
+                last.includes("add to collection") ||
+                last.includes("find more & add")
+            ) {
+                return { route: "pin_drop", classification };
+            }
+            if (
+                last.includes("show my existing pins") ||
+                last.includes("show my pins") ||
+                last.includes("show my existing")
+            ) {
+                return { route: "management", classification };
+            }
+        }
+    } catch {
+        // non-fatal — fall through to normal routing
+    }
+
     // ── STEP 2: high confidence management → route directly ─────────────────
     if (intent === "management" && confidence >= 0.85) {
         return { route: "management", classification };
