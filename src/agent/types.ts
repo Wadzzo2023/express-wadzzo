@@ -582,8 +582,7 @@ export interface GeneratedPin {
   url?: string;
   image?: string;
   address?: string;
-  category?: string;
-  metadata?: Record<string, unknown>;
+  gPlaceId?: string;
 }
 
 export interface Pin extends GeneratedPin {

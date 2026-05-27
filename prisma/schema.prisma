@@ -890,3 +890,10 @@ model AgentJob {
 
     @@index([creatorId, createdAt])
 }
+
+model GeoCache {
+    key       String   @id
+    value     String   @db.Text
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}

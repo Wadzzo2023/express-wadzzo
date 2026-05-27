@@ -405,7 +405,6 @@ export function buildClarificationResponse(
                     options: [
                         "Show my existing pins",
                         "Find more & add to collection",
-                        "Search fresh — ignore existing",
                     ],
                 },
             ],

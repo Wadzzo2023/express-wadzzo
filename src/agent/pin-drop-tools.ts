@@ -3,6 +3,8 @@ import { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
 import pLimit from "p-limit";
 import type { Pin, CityDiscoveryResult } from "./types";
+import { getCachedBounds, getCachedGeocode, getCachedPlaces, setCachedBounds, setCachedGeocode, setCachedPlaces } from "./geo-cache";
+import { logger } from "../lib/logger";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PIN STORE  (unchanged — keeps out-of-band pin state)
@@ -65,7 +67,6 @@ export interface BackboneResult {
 }
 
 interface NewPlaceLocation { latitude: number; longitude: number; }
-interface NewPlacePhoto { name: string; }
 interface NewPlaceDisplayName { text: string; languageCode?: string; }
 
 interface NewPlace {
@@ -73,11 +74,6 @@ interface NewPlace {
   displayName?: NewPlaceDisplayName;
   formattedAddress?: string;
   location?: NewPlaceLocation;
-  photos?: NewPlacePhoto[];
-  types?: string[];
-  rating?: number;
-  websiteUri?: string;
-  primaryTypeDisplayName?: NewPlaceDisplayName;
 }
 
 interface NewPlacesSearchResponse {
@@ -310,19 +306,58 @@ async function geocodeRaw(
 ): Promise<{ lat: number; lng: number } | null> {
   if (!address?.trim()) return null;
 
+  const cached = await getCachedGeocode(address, "");
+  if (cached) {
+    logger.info(`[geocodeRaw] CACHE HIT for "${address}"`, { lat: cached.lat, lng: cached.lng });
+    return { lat: cached.lat, lng: cached.lng };
+  }
+
   try {
+    const startTime = Date.now();
     const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
     url.searchParams.append("address", address);
     url.searchParams.append("key", apiKey);
+
+    logger.info(`[geocodeRaw] Calling Google Geocoding API`, { address, url: url.toString() });
     const res = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) });
     const data = (await res.json()) as GeocodeResponse;
-    if (data.status !== "OK" || !data.results?.[0]?.geometry?.location) return null;
+    const duration = Date.now() - startTime;
+
+    if (data.status !== "OK") {
+      logger.warn(`[geocodeRaw] Google Geocoding API returned non-OK status`, {
+        address,
+        status: data.status,
+        errorMessage: data.error_message,
+        duration,
+      });
+      return null;
+    }
+
+    if (!data.results?.[0]?.geometry?.location) {
+      logger.warn(`[geocodeRaw] No geometry/location in response`, { address, resultCount: data.results?.length });
+      return null;
+    }
+
     const { lat, lng } = data.results[0].geometry.location;
+    logger.info(`[geocodeRaw] ✓ Successfully geocoded "${address}"`, {
+      lat,
+      lng,
+      duration,
+      resultCount: data.results.length,
+    });
+
+    await setCachedGeocode(address, "", { lat, lng });
     return { lat, lng };
-  } catch {
+  } catch (err) {
+    logger.error(`[geocodeRaw] Error calling Google Geocoding API`, {
+      address,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     return null;
   }
 }
+
 function extractTextFromLLMContent(content: unknown): string {
   if (Array.isArray(content)) {
     return content
@@ -345,30 +380,20 @@ function extractTextFromLLMContent(content: unknown): string {
 export async function smartGeocode(
   location: NamedLocation,
   apiKey: string
-): Promise<{ lat: number; lng: number; image?: string; url?: string } | null> {
-  // Strategy 1: full address
-  // if (isAddressGeocodeWorthy(location.address)) {
-  //   const coords = await geocodeRaw(location.address, apiKey);
-  //   if (coords) {
-  //     console.log(`[smartGeocode] ✓ Strategy 1 (address) for "${location.name}"`);
-  //     return coords;
-  //   }
-  // }
-
-  // // Strategy 2: "Name, City, Country"
-  // if (location.name && (location.city || location.country)) {
-  //   const parts = [location.name, location.city, location.country].filter(Boolean);
-  //   const coords = await geocodeRaw(parts.join(", "), apiKey);
-  //   if (coords) {
-  //     console.log(`[smartGeocode] ✓ Strategy 2 (name+city) for "${location.name}"`);
-  //     return coords;
-  //   }
-  // }
+): Promise<{ lat: number; lng: number, gPlaceId?: string } | null> {
+  logger.info(`[smartGeocode] Starting geocode for location`, { name: location.name, address: location.address, city: location.city, country: location.country });
 
   // Strategy 3: Google Places Text Search — finds landmarks by name
   if (location.name) {
     const area = location.address ?? location.city ?? location.country ?? "";
-    console.log("name, area", location.name, area);
+    logger.debug(`[smartGeocode] Strategy 3: Google Places Text Search for "${location.name}"`, { area });
+
+    const cached = await getCachedGeocode(location.name, area);
+    if (cached) {
+      logger.info(`[smartGeocode] CACHE HIT using Places strategy for "${location.name}"`, { lat: cached.lat, lng: cached.lng });
+      return cached;
+    }
+
     const pins = await searchPlacesNewAPI(
       location.name,
       area,
@@ -376,27 +401,31 @@ export async function smartGeocode(
       apiKey
     );
     if (pins.length > 0) {
-      return {
+      const result = {
         lat: pins[0].latitude,
         lng: pins[0].longitude,
-        image: pins[0].image,
-        url: pins[0].url,
-      }
+        gPlaceId: pins[0].gPlaceId
+      };
+
+      logger.info(`[smartGeocode] ✓ Strategy 3 successful for "${location.name}"`, {
+        lat: result.lat,
+        lng: result.lng,
+        gPlaceId: result.gPlaceId,
+        area,
+      });
+
+      await setCachedGeocode(location.name, area, result);
+      return result;
     }
 
+    logger.warn(`[smartGeocode] Strategy 3 failed for "${location.name}"`, { area });
   }
 
-
-  // Strategy 4: coarse — just city + country
-  // if (location.city && location.country) {
-  //   const coords = await geocodeRaw(`${location.city}, ${location.country}`, apiKey);
-  //   if (coords) {
-  //     console.log(`[smartGeocode] ✓ Strategy 4 (city only) for "${location.name}" — coarse`);
-  //     return coords;
-  //   }
-  // }
-
-  console.warn(`[smartGeocode] ✗ All strategies failed for "${location.name}"`);
+  logger.error(`[smartGeocode] ✗ All strategies failed for "${location.name}"`, {
+    address: location.address,
+    city: location.city,
+    country: location.country,
+  });
   return null;
 }
 
@@ -406,16 +435,38 @@ export async function smartGeocode(
 
 async function getCityBounds(area: string, apiKey: string): Promise<CityBounds | null> {
   try {
+    logger.info(`[getCityBounds] Fetching bounds for area`, { area });
+
+    const cached = await getCachedBounds(area);
+    if (cached) {
+      logger.info(`[getCityBounds] CACHE HIT for "${area}"`, cached);
+      return cached;
+    }
+
+    const startTime = Date.now();
     const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
     url.searchParams.append("address", area);
     url.searchParams.append("key", apiKey);
+
+    logger.debug(`[getCityBounds] Calling Google Geocoding API for bounds`, { area, url: url.toString() });
     const res = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) });
     const data = (await res.json()) as GoogleGeocodeResponse;
-    if (data.status !== "OK" || !data.results?.[0]) return null;
+    const duration = Date.now() - startTime;
+
+    if (data.status !== "OK" || !data.results?.[0]) {
+      logger.warn(`[getCityBounds] Google Geocoding API failed`, {
+        area,
+        status: data.status,
+        duration,
+        resultCount: data.results?.length,
+      });
+      return null;
+    }
 
     const geo = data.results[0].geometry!;
     const box = geo.bounds ?? geo.viewport;
     let bounds: CityBounds;
+
     if (box) {
       bounds = {
         lat: (box.northeast.lat + box.southwest.lat) / 2,
@@ -423,13 +474,31 @@ async function getCityBounds(area: string, apiKey: string): Promise<CityBounds |
         latDelta: Math.abs(box.northeast.lat - box.southwest.lat),
         lngDelta: Math.abs(box.northeast.lng - box.southwest.lng),
       };
+      logger.info(`[getCityBounds] ✓ Extracted bounds from ${box === geo.bounds ? "bounds" : "viewport"}`, {
+        area,
+        bounds,
+        duration,
+      });
     } else if (geo.location) {
       bounds = { lat: geo.location.lat, lng: geo.location.lng, latDelta: 0.18, lngDelta: 0.18 };
+      logger.info(`[getCityBounds] ✓ Extracted bounds from location (fallback)`, {
+        area,
+        bounds,
+        duration,
+      });
     } else {
+      logger.warn(`[getCityBounds] No bounds or location in response`, { area });
       return null;
     }
+
+    await setCachedBounds(area, bounds);
     return bounds;
-  } catch {
+  } catch (err) {
+    logger.error(`[getCityBounds] Error fetching bounds`, {
+      area,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     return null;
   }
 }
@@ -502,34 +571,14 @@ export async function discoverCitiesForCountry(
 // GOOGLE PLACES SEARCH — New API + Legacy fallback  (mostly unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const GENERIC_GOOGLE_TYPES = new Set([
-  "point_of_interest", "establishment", "premise", "political",
-  "locality", "sublocality", "sublocality_level_1", "country",
-  "administrative_area_level_1", "administrative_area_level_2",
-  "neighborhood", "colloquial_area",
-]);
-
-function formatGoogleType(type: string): string {
-  return type.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-}
-
-function mapNewPlaceToPin(place: NewPlace, index: number, apiKey: string): Pin | null {
+function mapNewPlaceToPin(place: NewPlace, index: number): Pin | null {
   const lat = place.location?.latitude;
   const lng = place.location?.longitude;
   if (lat === undefined || lng === undefined) return null;
 
-  const category =
-    place.primaryTypeDisplayName?.text ??
-    place.types?.filter((t) => !GENERIC_GOOGLE_TYPES.has(t)).map(formatGoogleType).find(Boolean) ??
-    "Place";
-
-  const photoName = place.photos?.[0]?.name;
-  const photoUrl = photoName
-    ? `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=400&key=${apiKey}`
-    : undefined;
-
   return {
     id: place.id ?? `pin_${index}`,
+    gPlaceId: place.id,
     type: "LANDMARK",
     title: place.displayName?.text ?? `Location ${index}`,
     description: place.formattedAddress ?? "Location",
@@ -541,50 +590,81 @@ function mapNewPlaceToPin(place: NewPlace, index: number, apiKey: string): Pin |
     pinNumber: 1,
     radius: 2,
     autoCollect: false,
-    category,
     address: place.formattedAddress,
-    url: place.websiteUri ?? (place.id
-      ? `https://www.google.com/maps/place/?q=place_id:${place.id}`
-      : undefined),
-    image: photoUrl,
-    metadata: {
-      rating: place.rating,
-      googleMapsUrl: place.id
-        ? `https://www.google.com/maps/place/?q=place_id:${place.id}`
-        : undefined,
-    },
   };
 }
+
+// tools.ts — searchPlacesNewAPI (full updated function)
 
 async function searchPlacesNewAPI(
   query: string,
   area: string,
   count: number,
   apiKey: string
-): Promise<Pin[]> {
-  const bounds = await getCityBounds(area, apiKey);
-  const allPins: Pin[] = [];
-  const seenIds = new Set<string>();
-  const maxPages = Math.ceil(count / 20);
-  let pageToken: string | undefined;
+): Promise<Pin[]> {  // ← always returns Pin[], never CachedPlacesResult
+  logger.info(`[searchPlacesNewAPI] Starting search`, { query, area, requestedCount: count });
 
-  for (let page = 0; page < maxPages && allPins.length < count; page++) {
+  // ── Cache check ──────────────────────────────────────────────────────────
+  const cacheResult = await getCachedPlaces<Pin>(query, area, count);
+
+  if (cacheResult.shortfall === 0) {
+    logger.info(`[searchPlacesNewAPI] CACHE HIT (full)`, {
+      query,
+      area,
+      returned: cacheResult.pins.length,
+    });
+    return cacheResult.pins; // ← plain Pin[], searchViaGooglePlaces happy
+  }
+
+  if (cacheResult.pins.length > 0) {
+    logger.info(`[searchPlacesNewAPI] CACHE HIT (partial) — fetching shortfall from API`, {
+      query,
+      area,
+      cachedCount: cacheResult.pins.length,
+      shortfall: cacheResult.shortfall,
+      hasResumeToken: !!cacheResult.resumePageToken,
+    });
+  }
+
+  // ── Live API fetch (only for the shortfall) ──────────────────────────────
+  const bounds = await getCityBounds(area, apiKey);
+  const freshPins: Pin[] = [];
+  let pageToken: string | undefined = cacheResult.resumePageToken;
+  const maxPages = Math.ceil(cacheResult.shortfall / 20);
+
+  for (let page = 0; page < maxPages && freshPins.length < cacheResult.shortfall; page++) {
     try {
       const body: Record<string, unknown> = {
-        textQuery: `${query} in ${area}`,
-        maxResultCount: Math.min(20, count - allPins.length),
+        textQuery: area ? `${query} in ${area}` : query,
+        maxResultCount: Math.min(20, cacheResult.shortfall - freshPins.length),
         languageCode: "en",
       };
 
-      if (bounds) {
+      // Only apply locationBias on first page — pageToken carries its own
+      // location context, mixing both causes a Google API error
+      if (bounds && !pageToken) {
         body.locationBias = {
           circle: {
             center: { latitude: bounds.lat, longitude: bounds.lng },
-            radius: Math.min(50000, Math.max(bounds.latDelta, bounds.lngDelta) * 111_000 * 0.6),
+            radius: Math.min(
+              50000,
+              Math.max(bounds.latDelta, bounds.lngDelta) * 111_000 * 0.6
+            ),
           },
         };
       }
+
       if (pageToken) body.pageToken = pageToken;
+
+      const startTime = Date.now();
+      logger.debug(`[searchPlacesNewAPI] Calling Google Places API`, {
+        query,
+        area,
+        page: page + 1,
+        requestCount: body.maxResultCount,
+        hasResumeToken: !!cacheResult.resumePageToken,
+        hasPageToken: !!pageToken,
+      });
 
       const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
         method: "POST",
@@ -592,115 +672,133 @@ async function searchPlacesNewAPI(
           "Content-Type": "application/json",
           "X-Goog-Api-Key": apiKey,
           "X-Goog-FieldMask": [
-            "places.id", "places.displayName", "places.formattedAddress",
-            "places.location.latitude", "places.location.longitude",
-            "places.photos", "places.types", "places.rating",
-            "places.websiteUri", "places.primaryTypeDisplayName", "nextPageToken",
+            "places.id",
+            "places.displayName",
+            "places.formattedAddress",
+            "places.location.latitude",
+            "places.location.longitude",
+            "nextPageToken",
           ].join(","),
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(12000),
       });
+
+      const duration = Date.now() - startTime;
       const data = (await res.json()) as NewPlacesSearchResponse;
 
-      if (!data.places?.length) break;
-      for (const place of data.places) {
-        if (allPins.length >= count) break;
-        const pin = mapNewPlaceToPin(place, allPins.length, apiKey);
-        if (pin && !seenIds.has(pin.id)) { seenIds.add(pin.id); allPins.push(pin); }
+      if (!res.ok) {
+        logger.error(`[searchPlacesNewAPI] Google Places API error`, {
+          query,
+          area,
+          page: page + 1,
+          statusCode: res.status,
+          statusText: res.statusText,
+          duration,
+          response: data,
+        });
+        break;
       }
+
+      if (!data.places?.length) {
+        logger.info(`[searchPlacesNewAPI] No results in page`, {
+          query,
+          area,
+          page: page + 1,
+          duration,
+        });
+        break;
+      }
+
+      logger.debug(`[searchPlacesNewAPI] Received places from API`, {
+        query,
+        area,
+        page: page + 1,
+        placeCount: data.places.length,
+        duration,
+      });
+
+      for (const place of data.places) {
+        if (freshPins.length >= cacheResult.shortfall) break;
+        const pin = mapNewPlaceToPin(place, freshPins.length);
+        if (pin) freshPins.push(pin);
+      }
+
       pageToken = data.nextPageToken;
       if (!pageToken) break;
+
       await new Promise((r) => setTimeout(r, 500));
     } catch (error) {
-      console.error(`[searchPlacesNewAPI] Page ${page + 1} error:`, error);
+      logger.error(`[searchPlacesNewAPI] Page error`, {
+        query,
+        area,
+        page: page + 1,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       break;
     }
   }
-  return allPins;
-}
 
-interface LegacyPlaceResult {
-  place_id?: string; name?: string; formatted_address?: string;
-  geometry?: { location?: { lat: number; lng: number } };
-  photos?: Array<{ photo_reference: string }>; types?: string[]; rating?: number;
-}
-interface LegacyPlacesResponse {
-  status: string; results?: LegacyPlaceResult[];
-  next_page_token?: string; error_message?: string;
-}
-
-async function searchPlacesLegacyFallback(
-  query: string, area: string, count: number, apiKey: string
-): Promise<Pin[]> {
-  const allPins: Pin[] = [];
-  const seenIds = new Set<string>();
-  let pageToken: string | undefined;
-  const maxPages = Math.min(3, Math.ceil(count / 20));
-
-  for (let page = 0; page < maxPages && allPins.length < count; page++) {
-    try {
-      const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
-      url.searchParams.append("key", apiKey);
-      url.searchParams.append("query", `${query} in ${area}`);
-      if (pageToken) url.searchParams.append("pagetoken", pageToken);
-
-      const res = await fetch(url.toString(), { signal: AbortSignal.timeout(12000) });
-      const data = (await res.json()) as LegacyPlacesResponse;
-      if (data.status === "ZERO_RESULTS" || !data.results?.length) break;
-      if (data.status !== "OK") break;
-
-      for (const place of data.results) {
-        if (allPins.length >= count) break;
-        const lat = place.geometry?.location?.lat;
-        const lng = place.geometry?.location?.lng;
-        if (lat === undefined || lng === undefined) continue;
-        const photoRef = place.photos?.[0]?.photo_reference;
-        const pin: Pin = {
-          id: place.place_id ?? `legacy_pin_${allPins.length}`,
-          type: "LANDMARK",
-          title: place.name ?? `Location ${allPins.length}`,
-          description: place.formatted_address ?? "Location",
-          latitude: lat, longitude: lng,
-          startDate: todayString(), endDate: hundredYearsFromNow(),
-          pinCollectionLimit: 999999, pinNumber: 1, radius: 2, autoCollect: false,
-          address: place.formatted_address,
-          url: place.place_id ? `https://www.google.com/maps/place/?q=place_id:${place.place_id}` : undefined,
-          image: photoRef ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${photoRef}&key=${apiKey}` : undefined,
-          metadata: { rating: place.rating },
-        };
-        if (!seenIds.has(pin.id)) { seenIds.add(pin.id); allPins.push(pin); }
-      }
-      pageToken = data.next_page_token;
-      if (!pageToken) break;
-      await new Promise((r) => setTimeout(r, 2000));
-    } catch { break; }
+  // ── Persist fresh pins + new resume token ────────────────────────────────
+  if (freshPins.length > 0) {
+    const isComplete = !pageToken;
+    await setCachedPlaces(query, area, freshPins, pageToken, isComplete);
+    logger.info(`[searchPlacesNewAPI] Cached ${freshPins.length} fresh pins`, {
+      query,
+      area,
+      isComplete,
+      nextPageToken: pageToken,
+    });
   }
-  return allPins;
-}
 
-/** Combined Places search: New API first, then legacy fallback. */
+  // ── Always return Pin[] ───────────────────────────────────────────────────
+  const combined = [...cacheResult.pins, ...freshPins].slice(0, count);
+
+  logger.info(`[searchPlacesNewAPI] ✓ Done`, {
+    query,
+    area,
+    fromCache: cacheResult.pins.length,
+    fromAPI: freshPins.length,
+    returned: combined.length,
+    requested: count,
+  });
+
+  return combined; // ← plain Pin[], searchViaGooglePlaces never needs to change
+}
+/** New API first */
 export async function searchViaGooglePlaces(query: string, area: string, count: number): Promise<Pin[]> {
+  logger.info(`[searchViaGooglePlaces] Starting search`, { query, area, count });
+
   const apiKey = process.env.GOOGLE_MAP_API_KEY;
-  if (!apiKey) return [];
-
-  const bufferedCount = count * 2;
-  let results = await searchPlacesNewAPI(query, area, bufferedCount, apiKey);
-
-  if (results.length === 0) {
-    results = await searchPlacesLegacyFallback(query, area, bufferedCount, apiKey);
+  if (!apiKey) {
+    logger.error(`[searchViaGooglePlaces] GOOGLE_MAP_API_KEY not set`);
+    return [];
   }
 
-  if (results.length < count) {
-    const seenIds = new Set(results.map((p) => p.id));
-    const broader = await searchPlacesLegacyFallback(query, area, count - results.length, apiKey);
-    for (const p of broader) {
-      if (!seenIds.has(p.id)) { seenIds.add(p.id); results.push(p); }
-    }
-  }
+  try {
+    logger.debug(`[searchViaGooglePlaces] Using buffered count`, { requested: count, buffered: count });
 
-  const final = results.slice(0, count);
-  return final;
+    const results = await searchPlacesNewAPI(query, area, count, apiKey);
+    const final = results.slice(0, count);
+
+    logger.info(`[searchViaGooglePlaces] ✓ Search complete`, {
+      query,
+      area,
+      totalReceived: results.length,
+      finalReturned: final.length,
+    });
+
+    return final;
+  } catch (err) {
+    logger.error(`[searchViaGooglePlaces] Search failed`, {
+      query,
+      area,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return [];
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -733,9 +831,12 @@ async function mapEventToPin(
     type: "EVENT",
     title: event.title,
     description: event.description ?? event.venueName ?? "Event",
-    latitude: coords.lat, longitude: coords.lng,
-    startDate: event.startDate, endDate: event.endDate,
-    url: event.url, image: event.image,
+    latitude: coords.lat,
+    longitude: coords.lng,
+    startDate: event.startDate,
+    endDate: event.endDate,
+    url: event.url,
+    image: event.image,
     pinCollectionLimit: 999999, pinNumber: 1, radius: 2, autoCollect: false,
   };
 }
@@ -1069,25 +1170,59 @@ const GEOCODE_CONCURRENCY = 10; // bump from 5 to 10
 
 export const smartGeocodeTool = tool(
   async ({ locations }): Promise<string> => {
-    console.log(`[smartGeocodeTool] Geocoding ${locations.length} locations`);
+    logger.info(`[smartGeocodeTool] Starting batch geocoding`, { locationCount: locations.length });
 
     const apiKey = process.env.GOOGLE_MAP_API_KEY;
-    if (!apiKey) return JSON.stringify({ total: 0, failed: locations.length });
+    if (!apiKey) {
+      logger.error(`[smartGeocodeTool] GOOGLE_MAP_API_KEY not set`);
+      return JSON.stringify({ total: 0, failed: locations.length });
+    }
 
     const limit = pLimit(GEOCODE_CONCURRENCY);
     const allPins: Pin[] = [];
+    const geocodeStats = {
+      successful: 0,
+      failed: 0,
+      batchCount: 0,
+    };
 
     // Process in batches to avoid memory/timeout issues
     for (let i = 0; i < locations.length; i += GEOCODE_BATCH_SIZE) {
       const batch = locations.slice(i, i + GEOCODE_BATCH_SIZE);
+      geocodeStats.batchCount += 1;
+
+      logger.debug(`[smartGeocodeTool] Processing batch`, {
+        batchNumber: geocodeStats.batchCount,
+        batchSize: batch.length,
+        totalProcessed: allPins.length,
+      });
 
       const results = await Promise.all(
         batch.map((loc: NamedLocation, idx: number) =>
           limit(async (): Promise<Pin | null> => {
             const coords = await smartGeocode(loc, apiKey);
-            if (!coords) return null;
+            if (!coords) {
+              geocodeStats.failed += 1;
+              logger.debug(`[smartGeocodeTool] Failed to geocode`, {
+                name: loc.name,
+                address: loc.address,
+                city: loc.city,
+                country: loc.country,
+              });
+              return null;
+            }
+
+            geocodeStats.successful += 1;
+            logger.debug(`[smartGeocodeTool] ✓ Geocoded`, {
+              name: loc.name,
+              lat: coords.lat,
+              lng: coords.lng,
+              gPlaceId: coords.gPlaceId,
+            });
+
             return {
               id: `niche_${Date.now()}_${i + idx}_${Math.random().toString(36).slice(2, 6)}`,
+              gPlaceId: coords.gPlaceId,
               type: "LANDMARK" as const,
               title: loc.name,
               description: loc.address || `${loc.city ?? ""}, ${loc.country ?? ""}`.trim(),
@@ -1100,26 +1235,45 @@ export const smartGeocodeTool = tool(
               radius: 2,
               autoCollect: false,
               address: loc.address,
-              image: coords.image,
-              url: coords.url,
             };
           })
         )
       );
 
       allPins.push(...results.filter((p): p is Pin => p !== null));
-      console.log(`[smartGeocodeTool] Batch ${Math.floor(i / GEOCODE_BATCH_SIZE) + 1}: ${allPins.length} pins so far`);
+
+      logger.info(`[smartGeocodeTool] Batch ${geocodeStats.batchCount} complete`, {
+        batchSuccessful: results.filter((p): p is Pin => p !== null).length,
+        cumulativePins: allPins.length,
+        cumulativeStats: geocodeStats,
+      });
     }
 
     const dedupedPins = deduplicatePins(allPins, true);
+
+    logger.info(`[smartGeocodeTool] Deduplication complete`, {
+      beforeDedup: allPins.length,
+      afterDedup: dedupedPins.length,
+      removed: allPins.length - dedupedPins.length,
+    });
 
     if (dedupedPins.length > 0) {
       const existing = retrievePins();
       const merged = deduplicatePins([...(existing?.pins ?? []), ...dedupedPins], true);
       storePins(merged, "LANDMARK");
+      logger.info(`[smartGeocodeTool] Pins stored in pin store`, {
+        newPins: dedupedPins.length,
+        previousPins: existing?.pins.length ?? 0,
+        totalStored: merged.length,
+      });
     }
 
-    console.log(`[smartGeocodeTool] Done: ${dedupedPins.length} success, ${locations.length - allPins.length} failed`);
+    logger.info(`[smartGeocodeTool] ✓ Batch geocoding complete`, {
+      totalSuccessful: geocodeStats.successful,
+      totalFailed: geocodeStats.failed,
+      finalPinCount: dedupedPins.length,
+      batchesProcessed: geocodeStats.batchCount,
+    });
 
     return JSON.stringify({
       total: dedupedPins.length,
@@ -1154,21 +1308,39 @@ export const smartGeocodeTool = tool(
 
 export const placesSearchTool = tool(
   async ({ query, city, count = 20 }): Promise<string> => {
-    console.log("[placesSearchTool]", { query, city, count });
+    logger.info(`[placesSearchTool] Executing places search`, { query, city, count });
 
-    const bufferedCount = count * 2;
-    const pins = await searchViaGooglePlaces(query, city, bufferedCount);
+
+    logger.debug(`[placesSearchTool] Requesting with buffer`, { requested: count, buffered: count });
+
+    const pins = await searchViaGooglePlaces(query, city, count);
+
+    logger.info(`[placesSearchTool] Google Places search returned results`, {
+      query,
+      city,
+      resultCount: pins.length,
+      requested: count,
+    });
 
     if (pins.length > 0) {
       const existing = retrievePins();
       const merged = deduplicatePins([...(existing?.pins ?? []), ...pins]);
       storePins(merged, "LANDMARK");
+      logger.info(`[placesSearchTool] Stored results in pin store`, {
+        newPins: pins.length,
+        mergedTotal: merged.length,
+      });
+    } else {
+      logger.warn(`[placesSearchTool] No results found`, { query, city });
     }
+
+    const message = `Found ${pins.length} results for "${query}" in "${city}".`;
+    logger.info(`[placesSearchTool] ✓ Tool execution complete`, { query, city, resultCount: pins.length });
 
     return JSON.stringify({
       total: pins.length,
       city,
-      message: `Found ${pins.length} results for "${query}" in "${city}".`,
+      message,
     });
   },
   {
@@ -1195,49 +1367,90 @@ export const placesSearchTool = tool(
 
 export const brandCountrySearchTool = tool(
   async ({ query, country, count = 20 }): Promise<string> => {
-    console.log("[brandCountrySearchTool]", { query, country, count });
+    logger.info(`[brandCountrySearchTool] Starting country-wide search`, { query, country, count });
 
     const cities = await discoverCitiesForCountry(country, Math.min(20, Math.ceil(count / 3)));
     if (cities.length === 0) {
+      logger.warn(`[brandCountrySearchTool] No cities discovered`, { country });
       return JSON.stringify({ total: 0, country, message: `No cities found for "${country}".` });
     }
+
+    logger.info(`[brandCountrySearchTool] Discovered cities`, { country, cityCount: cities.length, cities });
 
     const perCity = Math.ceil((count / cities.length) * 2);
     const limit = pLimit(5);
     const allPins: Pin[] = [];
     const seenIds = new Set<string>();
 
+    logger.debug(`[brandCountrySearchTool] Starting parallel city searches`, {
+      query,
+      country,
+      cityCount: cities.length,
+      pinsPerCity: perCity,
+    });
+
     const cityResults = await Promise.all(
       cities.map((city) =>
         limit(async () => {
+          logger.debug(`[brandCountrySearchTool] Searching city`, { query, city });
           try {
-            return await searchViaGooglePlaces(query, city, perCity);
-          } catch {
+            const cityPins = await searchViaGooglePlaces(query, city, perCity);
+            logger.info(`[brandCountrySearchTool] City search complete`, {
+              city,
+              resultCount: cityPins.length,
+            });
+            return cityPins;
+          } catch (err) {
+            logger.error(`[brandCountrySearchTool] City search failed`, {
+              city,
+              error: err instanceof Error ? err.message : String(err),
+            });
             return [] as Pin[];
           }
         })
       )
     );
 
+    logger.debug(`[brandCountrySearchTool] Merging results from all cities`, {
+      country,
+      cityCount: cities.length,
+    });
+
     for (const cityPins of cityResults) {
       for (const pin of cityPins) {
-        if (!seenIds.has(pin.id)) { seenIds.add(pin.id); allPins.push(pin); }
+        if (!seenIds.has(pin.id)) {
+          seenIds.add(pin.id);
+          allPins.push(pin);
+        }
       }
     }
 
     const capped = deduplicatePins(allPins).slice(0, count);
 
+    logger.info(`[brandCountrySearchTool] Deduplication complete`, {
+      beforeDedup: allPins.length,
+      afterDedup: capped.length,
+      finalCap: count,
+    });
+
     if (capped.length > 0) {
       const existing = retrievePins();
       const merged = deduplicatePins([...(existing?.pins ?? []), ...capped]);
       storePins(merged, "LANDMARK");
+      logger.info(`[brandCountrySearchTool] Pins stored`, {
+        newPins: capped.length,
+        mergedTotal: merged.length,
+      });
     }
+
+    const message = `Found ${capped.length} results for "${query}" across ${cities.length} cities in "${country}".`;
+    logger.info(`[brandCountrySearchTool] ✓ Complete`, { query, country, resultCount: capped.length });
 
     return JSON.stringify({
       total: capped.length,
       country,
       citiesSearched: cities,
-      message: `Found ${capped.length} results for "${query}" across ${cities.length} cities in "${country}".`,
+      message,
     });
   },
   {
@@ -1265,7 +1478,12 @@ export const brandCountrySearchTool = tool(
 
 export const subcategoryFanoutTool = tool(
   async ({ query, area, subcategories, count = 50 }): Promise<string> => {
-    console.log("[subcategoryFanoutTool]", { query, area, subcatCount: subcategories.length, count });
+    logger.info(`[subcategoryFanoutTool] Starting subcategory fan-out search`, {
+      query,
+      area,
+      subcategoryCount: subcategories.length,
+      count,
+    });
 
     const allPins: Pin[] = [];
     const seenIds = new Set<string>();
@@ -1274,13 +1492,29 @@ export const subcategoryFanoutTool = tool(
     // Phase 1: Search each subcategory in the main area
     const perSubcat = Math.ceil((count / subcategories.length) * 1.5);
 
+    logger.debug(`[subcategoryFanoutTool] Phase 1: Subcategory search`, {
+      area,
+      subcategories,
+      pinsPerSubcategory: perSubcat,
+    });
+
     const subcatResults = await Promise.all(
       subcategories.map((sub) =>
         limit(async () => {
+          logger.debug(`[subcategoryFanoutTool] Searching subcategory`, { area, subcategory: sub });
           try {
             const searchTerm = sub === query ? query : `${sub} ${query}`;
-            return await searchViaGooglePlaces(searchTerm, area, perSubcat);
-          } catch {
+            const pins = await searchViaGooglePlaces(searchTerm, area, perSubcat);
+            logger.info(`[subcategoryFanoutTool] Subcategory results`, {
+              subcategory: sub,
+              resultCount: pins.length,
+            });
+            return pins;
+          } catch (err) {
+            logger.error(`[subcategoryFanoutTool] Subcategory search failed`, {
+              subcategory: sub,
+              error: err instanceof Error ? err.message : String(err),
+            });
             return [] as Pin[];
           }
         })
@@ -1289,14 +1523,28 @@ export const subcategoryFanoutTool = tool(
 
     for (const pins of subcatResults) {
       for (const pin of pins) {
-        if (!seenIds.has(pin.id)) { seenIds.add(pin.id); allPins.push(pin); }
+        if (!seenIds.has(pin.id)) {
+          seenIds.add(pin.id);
+          allPins.push(pin);
+        }
       }
     }
 
-    console.log(`[subcategoryFanoutTool] Phase 1 (subcategories): ${allPins.length} pins`);
+    logger.info(`[subcategoryFanoutTool] Phase 1 complete`, {
+      area,
+      subcategoryCount: subcategories.length,
+      totalPins: allPins.length,
+      targetCount: count,
+    });
 
     // Phase 2: If still short, expand to nearby towns
     if (allPins.length < count) {
+      logger.info(`[subcategoryFanoutTool] Phase 2: Gap-filling with nearby towns`, {
+        currentCount: allPins.length,
+        targetCount: count,
+        shortfall: count - allPins.length,
+      });
+
       const llm = new ChatOpenAI({ model: "gpt-5.4-mini", temperature: 0 });
       const nearbyRes = await llm.invoke([{
         role: "user",
@@ -1310,16 +1558,36 @@ export const subcategoryFanoutTool = tool(
         const text = typeof nearbyRes.content === "string" ? nearbyRes.content : "";
         const parsed = parseLooseJson<{ towns: string[] }>(text);
         nearbyTowns = parsed?.towns ?? [];
-      } catch { /* skip nearby expansion */ }
+        logger.info(`[subcategoryFanoutTool] Discovered nearby towns`, { area, townCount: nearbyTowns.length, towns: nearbyTowns });
+      } catch (err) {
+        logger.warn(`[subcategoryFanoutTool] Failed to discover nearby towns`, {
+          area,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
 
       if (nearbyTowns.length > 0) {
         const perTown = Math.ceil((count - allPins.length) / nearbyTowns.length) * 2;
+
+        logger.debug(`[subcategoryFanoutTool] Searching nearby towns`, {
+          query,
+          townCount: nearbyTowns.length,
+          pinsPerTown: perTown,
+        });
+
         const townResults = await Promise.all(
           nearbyTowns.map((town) =>
             limit(async () => {
+              logger.debug(`[subcategoryFanoutTool] Searching nearby town`, { query, town });
               try {
-                return await searchViaGooglePlaces(query, town, perTown);
-              } catch {
+                const pins = await searchViaGooglePlaces(query, town, perTown);
+                logger.info(`[subcategoryFanoutTool] Nearby town results`, { town, resultCount: pins.length });
+                return pins;
+              } catch (err) {
+                logger.error(`[subcategoryFanoutTool] Nearby town search failed`, {
+                  town,
+                  error: err instanceof Error ? err.message : String(err),
+                });
                 return [] as Pin[];
               }
             })
@@ -1328,25 +1596,45 @@ export const subcategoryFanoutTool = tool(
 
         for (const pins of townResults) {
           for (const pin of pins) {
-            if (!seenIds.has(pin.id)) { seenIds.add(pin.id); allPins.push(pin); }
+            if (!seenIds.has(pin.id)) {
+              seenIds.add(pin.id);
+              allPins.push(pin);
+            }
           }
         }
-        console.log(`[subcategoryFanoutTool] Phase 2 (nearby towns): ${allPins.length} pins total`);
+
+        logger.info(`[subcategoryFanoutTool] Phase 2 complete`, {
+          area,
+          nearbyTowns: nearbyTowns.length,
+          totalPins: allPins.length,
+        });
       }
     }
 
     const capped = deduplicatePins(allPins).slice(0, count);
 
+    logger.info(`[subcategoryFanoutTool] Deduplication complete`, {
+      beforeDedup: allPins.length,
+      afterDedup: capped.length,
+    });
+
     if (capped.length > 0) {
       const existing = retrievePins();
       const merged = deduplicatePins([...(existing?.pins ?? []), ...capped]);
       storePins(merged, "LANDMARK");
+      logger.info(`[subcategoryFanoutTool] Pins stored`, {
+        newPins: capped.length,
+        mergedTotal: merged.length,
+      });
     }
+
+    const message = `Found ${capped.length} ${query} in ${area} area (searched ${subcategories.length} subcategories).`;
+    logger.info(`[subcategoryFanoutTool] ✓ Complete`, { query, area, resultCount: capped.length });
 
     return JSON.stringify({
       total: capped.length,
       area,
-      message: `Found ${capped.length} ${query} in ${area} area (searched ${subcategories.length} subcategories).`,
+      message,
     });
   },
   {
@@ -1374,15 +1662,23 @@ export const subcategoryFanoutTool = tool(
 
 export const eventSearchTool = tool(
   async ({ query, city, count = 5 }): Promise<string> => {
-    console.log("[eventSearchTool]", { query, city, count });
+    logger.info(`[eventSearchTool] Starting event search`, { query, city, count });
+
     const today = todayString();
     const apiKey = process.env.GOOGLE_MAP_API_KEY;
-    if (!apiKey) return JSON.stringify({ total: 0, message: "API key not set" });
+
+    if (!apiKey) {
+      logger.error(`[eventSearchTool] GOOGLE_MAP_API_KEY not set`);
+      return JSON.stringify({ total: 0, message: "API key not set" });
+    }
 
     try {
       const llm = new ChatOpenAI({ model: "gpt-5.4-mini" }).bindTools([
         { type: "web_search_preview" } as never,
       ]);
+
+      logger.debug(`[eventSearchTool] Searching for events`, { query, city, today });
+
       const response = await llm.invoke([{
         role: "user",
         content:
@@ -1392,25 +1688,76 @@ export const eventSearchTool = tool(
       }]);
 
       const raw = stringifyToolResponseContent(response.content);
+      logger.debug(`[eventSearchTool] Received event data`, { query, city, responseLength: raw.length });
 
       const parsed = parseLooseJson<RawEventResult[]>(raw) ?? [];
+      logger.info(`[eventSearchTool] Parsed events`, {
+        query,
+        city,
+        parsedCount: parsed.length,
+      });
+
+      // Filter to future events only
+      const futureEvents = parsed.filter((e) => isFutureDate(e.startDate ?? "") && isFutureDate(e.endDate ?? ""));
+      logger.debug(`[eventSearchTool] Filtered to future events`, {
+        query,
+        city,
+        totalParsed: parsed.length,
+        futureCoun: futureEvents.length,
+      });
+
+      // Geocode each event
       const limiter = pLimit(5);
       const pinResults = await Promise.all(
-        parsed
-          .filter((e) => isFutureDate(e.startDate ?? "") && isFutureDate(e.endDate ?? ""))
+        futureEvents
+          .filter((e) => new Date(e.endDate!) >= new Date(e.startDate!))
           .map((e, i) => limiter(() => mapEventToPin(e, i, apiKey, city)))
       );
+
       const pins = pinResults.filter((p): p is Pin => p !== null);
+
+      logger.info(`[eventSearchTool] Geocoding complete`, {
+        query,
+        city,
+        totalEvents: futureEvents.length,
+        successfulGeocodes: pins.length,
+        failed: futureEvents.length - pins.length,
+      });
 
       if (pins.length > 0) {
         const existing = retrievePins();
         const merged = deduplicatePins([...(existing?.pins ?? []), ...pins]);
         storePins(merged, "EVENT");
+        logger.info(`[eventSearchTool] Pins stored`, {
+          query,
+          city,
+          newPins: pins.length,
+          mergedTotal: merged.length,
+        });
+      } else {
+        logger.warn(`[eventSearchTool] No events geocoded successfully`, { query, city });
       }
 
-      return JSON.stringify({ total: pins.length, city, message: `Found ${pins.length} upcoming ${query} events in ${city}.` });
-    } catch {
-      return JSON.stringify({ total: 0, city, message: `No events found for "${query}" in "${city}".` });
+      const message = `Found ${pins.length} upcoming ${query} events in ${city}.`;
+      logger.info(`[eventSearchTool] ✓ Complete`, { query, city, eventCount: pins.length });
+
+      return JSON.stringify({
+        total: pins.length,
+        city,
+        message,
+      });
+    } catch (err) {
+      logger.error(`[eventSearchTool] Search failed`, {
+        query,
+        city,
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      return JSON.stringify({
+        total: 0,
+        city,
+        message: `No events found for "${query}" in "${city}".`,
+      });
     }
   },
   {
