@@ -76,11 +76,37 @@ app.use(
     }
 );
 
+// ── Graceful error handling ───────────────────────────────────────────────────
+process.on("uncaughtException", (err) => {
+    logger.error("[process] Uncaught exception:", err.message, err.stack);
+});
+
+process.on("unhandledRejection", (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    logger.error("[process] Unhandled rejection:", msg);
+});
+
+// ── Graceful shutdown ────────────────────────────────────────────────────────
+function shutdown(signal: string) {
+    logger.info(`[process] ${signal} received — shutting down gracefully`);
+    server?.close(() => {
+        logger.info("[process] Server closed");
+        process.exit(0);
+    });
+    setTimeout(() => {
+        logger.warn("[process] Forceful shutdown after 10s timeout");
+        process.exit(1);
+    }, 10_000);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 // ── Background maintenance ────────────────────────────────────────────────────
 setInterval(() => pruneOldJobs(), 30 * 60 * 1000);
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     logger.info(
         `✓ Task server running on port ${PORT} (${process.env.NODE_ENV ?? "development"})`
     );
