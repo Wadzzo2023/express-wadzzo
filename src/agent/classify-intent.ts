@@ -201,14 +201,28 @@ export async function dbPresenceCheck(
     }
 
     try {
+        const trimmed = subject.trim();
+        const kebab = trimmed.toLowerCase().replace(/\s+/g, "-");
+
         const matches = await db.locationGroup.findMany({
             where: {
                 creatorId,
                 hidden: false,
-                title: {
-                    contains: subject.trim(),
-                    mode: "insensitive",
-                },
+                OR: [
+                    { title: { contains: trimmed, mode: "insensitive" } },
+                    {
+                        locationGroupTags: {
+                            some: {
+                                tag: {
+                                    OR: [
+                                        { label: { contains: trimmed, mode: "insensitive" } },
+                                        { name: { contains: kebab, mode: "insensitive" } },
+                                    ],
+                                },
+                            },
+                        },
+                    },
+                ],
             },
             select: {
                 id: true,

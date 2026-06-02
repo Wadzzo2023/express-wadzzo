@@ -23,6 +23,26 @@ export async function runAgentPipeline(input: AgentRunPayload): Promise<object> 
 
     logger.info(`[pipeline] Start — creator=${creatorId} loadMore=${loadMore ?? false}`);
 
+    // Short-circuit: confirmed pins with pinOptions → skip routing, go straight to pin-drop
+    if (pinOptions && pins && pins.length > 0) {
+        logger.info(`[pipeline] Short-circuit — confirmed pins (${pins.length}) with pinOptions, skipping route classification`);
+        const result = await runPinDropAgent({
+            messages,
+            intent,
+            pinOptions,
+            creatorId,
+            pins,
+        });
+        return {
+            reply: result.reply,
+            stage: result.stage,
+            intent: result.intent,
+            pins: result.pins,
+            pinOptions: result.pinOptions,
+            jobId: result.jobId,
+        };
+    }
+
     // STEP 1: route
     const decision = await resolveRoute(messages, creatorId, intent);
     logger.info(`[pipeline] Route: ${decision.route}`);

@@ -252,7 +252,21 @@ export const createDbTools = (creatorId: string) => {
                 ...(_filter === "active" && { endDate: { gte: today } }),
                 ...(_filter === "fully_claimed" && { remaining: 0, limit: { gt: 0 } }),
                 ...(search && {
-                    title: { contains: search, mode: "insensitive" as const },
+                    OR: [
+                        { title: { contains: search, mode: "insensitive" as const } },
+                        {
+                            locationGroupTags: {
+                                some: {
+                                    tag: {
+                                        OR: [
+                                            { label: { contains: search, mode: "insensitive" as const } },
+                                            { name: { contains: search.toLowerCase().replace(/\s+/g, "-"), mode: "insensitive" as const } },
+                                        ],
+                                    },
+                                },
+                            },
+                        },
+                    ],
                 }),
                 ...geoFilter,
             };
@@ -457,7 +471,21 @@ export const createDbTools = (creatorId: string) => {
                 ...(search && {
                     locationGroups: {
                         some: {
-                            title: { contains: search, mode: "insensitive" as const },
+                            OR: [
+                                { title: { contains: search, mode: "insensitive" as const } },
+                                {
+                                    locationGroupTags: {
+                                        some: {
+                                            tag: {
+                                                OR: [
+                                                    { label: { contains: search, mode: "insensitive" as const } },
+                                                    { name: { contains: search.toLowerCase().replace(/\s+/g, "-"), mode: "insensitive" as const } },
+                                                ],
+                                            },
+                                        },
+                                    },
+                                },
+                            ],
                         },
                     },
                 }),
@@ -794,7 +822,21 @@ export const createDbTools = (creatorId: string) => {
                 approved: true,
                 limit: { gt: 0 },
                 ...(search && {
-                    title: { contains: search, mode: "insensitive" as const },
+                    OR: [
+                        { title: { contains: search, mode: "insensitive" as const } },
+                        {
+                            locationGroupTags: {
+                                some: {
+                                    tag: {
+                                        OR: [
+                                            { label: { contains: search, mode: "insensitive" as const } },
+                                            { name: { contains: search.toLowerCase().replace(/\s+/g, "-"), mode: "insensitive" as const } },
+                                        ],
+                                    },
+                                },
+                            },
+                        },
+                    ],
                 }),
             };
 
