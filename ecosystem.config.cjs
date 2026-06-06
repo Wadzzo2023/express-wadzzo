@@ -1,9 +1,9 @@
 module.exports = {
   apps: [
     {
-      name: "express-server",
+      name: "bandcoin-backend",
       script: "dist/index.js",
-      cwd: "/home/ec2-user/code/express-wadzzo",
+      cwd: "/home/ec2-user/code/bandcoin-backend",
       instances: 1,
       autorestart: true,
       max_restarts: 50,
