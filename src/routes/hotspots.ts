@@ -144,7 +144,7 @@ router.post(
 
         const daysRemaining = (hotspotEndDate.getTime() - now.getTime()) / 86_400_000;
         if (daysRemaining > input.dropEveryDays) {
-            hotspotScheduler.start(hotspot.id, creatorId, input.dropEveryDays);
+            hotspotScheduler.start(hotspot.id, creatorId, input.dropEveryDays, now);
             logger.info(`[hotspots] Schedule started for hotspot=${hotspot.id}`);
         }
 
@@ -181,6 +181,7 @@ router.get(
                 autoCollect: h.autoCollect,
                 totalDrops: h._count.locationGroups,
                 hasSchedule: hotspotScheduler.has(h.id),
+                nextRunTime: hotspotScheduler.has(h.id) ? hotspotScheduler.getNextRunTime(h.id)?.toISOString() ?? null : null,
                 createdAt: h.createdAt,
             })),
         });
@@ -216,7 +217,9 @@ router.get(
 
         if (!hotspot) { res.status(404).json({ error: "Hotspot not found" }); return; }
 
-        res.json({ ...hotspot, hasSchedule: hotspotScheduler.has(hotspot.id) });
+        const hasSchedule = hotspotScheduler.has(hotspot.id);
+        const nextRunTime = hasSchedule ? hotspotScheduler.getNextRunTime(hotspot.id)?.toISOString() ?? null : null;
+        res.json({ ...hotspot, hasSchedule, nextRunTime });
     })
 );
 
@@ -260,12 +263,12 @@ router.post(
         const { creatorId } = parse.data;
         const hotspot = await db.hotspot.findFirst({
             where: { id: req.params.id, creatorId },
-            select: { id: true, dropEveryDays: true },
+            select: { id: true, dropEveryDays: true, createdAt: true },
         });
         if (!hotspot) { res.status(404).json({ error: "Hotspot not found" }); return; }
 
         if (!hotspotScheduler.has(req.params.id)) {
-            hotspotScheduler.start(req.params.id, creatorId, hotspot.dropEveryDays);
+            hotspotScheduler.start(req.params.id, creatorId, hotspot.dropEveryDays, hotspot.createdAt);
         } else {
             hotspotScheduler.resume(req.params.id);
         }

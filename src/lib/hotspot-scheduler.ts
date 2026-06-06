@@ -14,6 +14,7 @@
  */
 
 import cron from "node-cron";
+import cronParser from "cron-parser";
 import { db } from "./db.js";
 import { logger } from "./logger.js";
 import { dropPinsForHotspot } from "./hotspot-drop";
@@ -25,15 +26,20 @@ interface ScheduledHotspot {
     creatorId: string;
     dropEveryDays: number;
     task: cron.ScheduledTask;
+    anchorDate: Date;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
-function buildCronExpression(dropEveryDays: number): string {
-    if (dropEveryDays === 1) return "0 0 * * *";
-    if (dropEveryDays <= 28) return `0 0 */${dropEveryDays} * *`;
-    return "0 0 1 * *"; // monthly fallback
+function buildCronExpression(dropEveryDays: number, anchorDate: Date = new Date()): string {
+    const m = anchorDate.getMinutes();
+    const h = anchorDate.getHours();
+    const mm = String(m).padStart(2, "0");
+    const hh = String(h).padStart(2, "0");
+    if (dropEveryDays === 1) return `${mm} ${hh} * * *`;
+    if (dropEveryDays <= 28) return `${mm} ${hh} */${dropEveryDays} * *`;
+    return `${mm} ${hh} 1 * *`; // monthly fallback
 }
 
 // ─── Scheduler class ──────────────────────────────────────────────────────────
@@ -48,10 +54,10 @@ class HotspotScheduler {
      * Register and immediately start a cron for this hotspot.
      * Safe to call multiple times — stops any existing task first.
      */
-    start(hotspotId: string, creatorId: string, dropEveryDays: number): void {
+    start(hotspotId: string, creatorId: string, dropEveryDays: number, anchorDate: Date = new Date()): void {
         this.stop(hotspotId); // idempotent — clear any stale task
 
-        const expression = buildCronExpression(dropEveryDays);
+        const expression = buildCronExpression(dropEveryDays, anchorDate);
         logger.info(
             `[hotspot-scheduler] Starting hotspot=${hotspotId} cron="${expression}" (every ${dropEveryDays}d)`
         );
@@ -60,7 +66,7 @@ class HotspotScheduler {
             void this.runDrop(hotspotId);
         });
 
-        this.schedules.set(hotspotId, { hotspotId, creatorId, dropEveryDays, task });
+        this.schedules.set(hotspotId, { hotspotId, creatorId, dropEveryDays, task, anchorDate });
     }
 
     /**
@@ -110,6 +116,16 @@ class HotspotScheduler {
         return this.schedules.has(hotspotId);
     }
 
+    /**
+     * Return the next scheduled run time for a hotspot, or null if not scheduled.
+     */
+    getNextRunTime(hotspotId: string): Date | null {
+        const entry = this.schedules.get(hotspotId);
+        if (!entry) return null;
+        const expression = buildCronExpression(entry.dropEveryDays, entry.anchorDate);
+        return cronParser.parseExpression(expression).next().toDate();
+    }
+
     /** Count of currently tracked schedules (for health endpoint). */
     count(): number {
         return this.schedules.size;
@@ -129,6 +145,7 @@ class HotspotScheduler {
                 creatorId: true,
                 dropEveryDays: true,
                 hotspotEndDate: true,
+                createdAt: true,
             },
         });
 
@@ -146,7 +163,7 @@ class HotspotScheduler {
                 continue;
             }
 
-            this.start(h.id, h.creatorId, h.dropEveryDays);
+            this.start(h.id, h.creatorId, h.dropEveryDays, h.createdAt);
             restored++;
         }
 
