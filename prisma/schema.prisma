@@ -46,6 +46,7 @@ enum NotificationType {
     POST
     SHOP_ASSET
     FOLLOW
+    MEMBER
     REPLY
     BOUNTY
     BOUNTY_PARTICIPANT
@@ -86,46 +87,45 @@ model NotificationObject {
 
 // ------------------------FAN SCHEMA-------------------------
 model Subscription {
-    id Int @id @default(autoincrement())
-
-    name     String
-    features String
-    price    Float // here price is the copy of creator page asset
-
-    creatorId String
-    creator   Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-
-    posts         Post[]
+    id            Int             @id @default(autoincrement())
+    name          String
+    description   String
+    features      String[] // Stored as JSON array
+    color         String          @default("bg-blue-500")
+    popular       Boolean         @default(false)
+    isActive      Boolean         @default(true)
+    price         Float // here price is the copy of creator page asset
+    creatorId     String
+    creator       Creator         @relation(fields: [creatorId], references: [id], onDelete: Cascade)
     assets        Asset[]
     LocationGroup LocationGroup[]
+    postGroup     PostGroup[]
 
     @@unique([name, creatorId])
 }
 
 model Like {
-    id        Int      @id @default(autoincrement())
-    postId    Int
-    post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-    userId    String
-    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-    createdAt DateTime @default(now())
+    id          Int       @id @default(autoincrement())
+    userId      String
+    user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    createdAt   DateTime  @default(now())
+    postGroupId Int
+    postGroup   PostGroup @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
+    status      Boolean   @default(true)
 
-    status Boolean @default(true)
-
-    @@unique([postId, userId])
+    @@unique([postGroupId, userId])
 }
 
 model Comment {
-    id              Int    @id @default(autoincrement())
+    id              Int       @id @default(autoincrement())
     parentCommentID Int? // Optional field to reference parent comment (for nested comments)
-    postId          Int // Foreign key referencing Post model
-    post            Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
     userId          String // Foreign key referencing User model
-    user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+    user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
     content         String // Content of the comment
-
+    postGroupId     Int
+    postGroup       PostGroup @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
     // Optional relationship: a comment can have a parent comment
-    parentComment Comment? @relation("ChildComments", fields: [parentCommentID], references: [id], onDelete: Cascade)
+    parentComment   Comment?  @relation("ChildComments", fields: [parentCommentID], references: [id], onDelete: Cascade)
 
     createdAt DateTime @default(now()) // Timestamp when the comment was created
 
@@ -134,12 +134,12 @@ model Comment {
 }
 
 model User_Asset {
-    id     Int    @id @default(autoincrement())
-    userId String
-    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    assetId Int
-    asset   Asset @relation(fields: [assetId], references: [id], onDelete: NoAction)
+    id        Int     @id @default(autoincrement())
+    userId    String
+    user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+    isRoyalty Boolean @default(false)
+    assetId   Int
+    asset     Asset   @relation(fields: [assetId], references: [id], onDelete: NoAction)
 
     buyAt DateTime @default(now())
 }
@@ -158,13 +158,32 @@ model Follow {
     @@unique([userId, creatorId])
 }
 
-model Media {
-    id   Int       @id @default(autoincrement())
-    url  String
-    type MediaType
+// General Follow
+model TemporalFollow {
+    id     Int    @id @default(autoincrement())
+    userId String
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    postId Int
-    post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+    creatorId String
+    creator   Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+    followAt DateTime @default(now())
+
+    // Unique constraint on userId and subscriptionId
+    @@unique([userId, creatorId])
+}
+
+model Media {
+    id          Int        @id @default(autoincrement())
+    url         String
+    type        MediaType
+    title       String?
+    artist      String?
+    album       String?
+    thumbnail   String?
+    duration    Int?
+    postGroupId Int?
+    postGroup   PostGroup? @relation(fields: [postGroupId], references: [id])
 }
 
 model CreatorPageAsset {
@@ -183,12 +202,18 @@ model CreatorPageAsset {
 }
 
 model Creator {
-    id         String   @id
-    joinedAt   DateTime @default(now())
-    profileUrl String?
-    coverUrl   String?
-    bio        String?
-    name       String
+    id                   String   @id
+    joinedAt             DateTime @default(now())
+    profileUrl           String?
+    coverUrl             String?
+    coverHeightDefault   Int      @default(240)
+    coverHeightDesktop   Int      @default(240)
+    coverHeightMobile    Int      @default(220)
+    sectionLayoutDefault Json?
+    sectionLayoutDesktop Json?
+    sectionLayoutMobile  Json?
+    bio                  String?
+    name                 String
 
     backgroundSVG String?
     showSVG       Boolean @default(false)
@@ -197,39 +222,86 @@ model Creator {
     storagePub    String
     storageSecret String
 
-    aprovalSend         Boolean
-    approved            Boolean? // if undefined than it is sended for aproval, false means banned, true means aproved
-    notCreatorButSeller Boolean  @default(false) // only for if normal user want to sell or place to market
+    justStorageCreated Boolean?
+    aprovalSend        Boolean
+    approved           Boolean? // if undefined than it is sended for aproval, false means banned, true means aproved
 
     // pageAsset
     pageAssetId Int?
 
     customPageAssetCodeIssuer String? // CODE-ISSUER-ASSET-USD
+    //handle
+    website                   String?
+    twitter                   String?
+    instagram                 String?
 
-    extraFields Json? // {navPermission?: true}
+    user User @relation(fields: [id], references: [id], onDelete: Cascade)
 
-    user               User                  @relation(fields: [id], references: [id], onDelete: Cascade)
-    posts              Post[]
-    subscriptions      Subscription[]
-    assets             Asset[]
-    marketAssets       MarketAsset[]
-    pageAsset          CreatorPageAsset?
-    followers          Follow[]
-    LocationGroup      LocationGroup[]
-    Bounty             Bounty[]
-    vanitySubscription VanitySubscription?
-    Album              Album[]
-    Song               Song[]
-    SellPageAsset      SellPageAsset[]
-    pinAgentSessions   PinAgentChatSession[] @relation("pinAgentSessions")
-    pinAgentMessages   PinAgentChatHistory[] @relation("pinAgentMessages")
-    createdAt          DateTime              @default(now())
-    hotspots           Hotspot[]
-    locationGroupJobs  LocationGroupJob[]
-    agentJobs          AgentJob[]
-    locationTags       LocationTag[]
+    subscriptions       Subscription[]
+    assets              Asset[]
+    marketAssets        MarketAsset[]
+    pageAsset           CreatorPageAsset?
+    followers           Follow[]
+    LocationGroup       LocationGroup[]
+    Bounty              Bounty[]
+    vanitySubscription  VanitySubscription?
+    Album               Album[]
+    Song                Song[]
+    createdAt           DateTime              @default(now())
+    Appearance          Appearance[]
+    CreatorCustomDomain CreatorCustomDomain[]
+    SellPageAsset       SellPageAsset[]
+    aiGeneratedContents AiGeneratedContent[]
+    temporalFollows     TemporalFollow[]
+    creatorAssetIssuer  CreatorAssetIssuer?
+    postGroups          PostGroup[]
+    hotspots            Hotspot[]
+    agentJobs           AgentJob[]
+    locationGroupJobs   LocationGroupJob[]
+    locationTags        LocationTag[]
 
     @@index([bio, name])
+}
+
+model CreatorAssetIssuer {
+    creatorId     String   @unique
+    creator       Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    issuer        String
+    issuerPrivate String
+    createdAt     DateTime @default(now())
+}
+
+model Appearance {
+    id        String   @id @default(cuid())
+    name      String
+    isDefault Boolean  @default(false)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    creatorId String? // Optional field to reference the creator
+    creator   Creator? @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    widgets   Widget[]
+    theme     Json? // Store theme as JSON
+    isPublic  Boolean  @default(false)
+
+    @@index([creatorId])
+}
+
+model Widget {
+    id           String  @id @default(cuid())
+    widgetId     String // The type of widget (e.g., "stats", "profile", etc.)
+    size         String // "small", "medium", or "large"
+    order        Int
+    pinned       Boolean @default(false)
+    groupId      String? // For grouped widgets
+    customWidth  Float? // For custom width percentage in groups
+    appearanceId String
+    settings     Json? // Add this line
+
+    appearance Appearance @relation(fields: [appearanceId], references: [id], onDelete: Cascade)
+    createdAt  DateTime   @default(now())
+    updatedAt  DateTime   @updatedAt
+
+    @@index([appearanceId])
 }
 
 model VanitySubscription {
@@ -244,25 +316,51 @@ model VanitySubscription {
     lastPaymentDate   DateTime
 }
 
-model Post {
-    id Int @id @default(autoincrement())
-
-    content String
-    heading String @default("Heading")
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    creator   Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-    creatorId String
-
-    subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+model PostGroup {
+    id             Int           @id @default(autoincrement())
+    content        String
+    heading        String        @default("Heading")
+    description    String?
+    creatorId      String
+    creator        Creator       @relation(fields: [creatorId], references: [id], onDelete: Cascade)
     subscriptionId Int?
-    likes          Like[]
-    comments       Comment[]
-    medias         Media[]
+    subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
 
-    @@index([heading])
+    createdAt   DateTime         @default(now())
+    updatedAt   DateTime         @updatedAt
+    posts       Post[]
+    collections PostCollection[]
+    likes       Like[]
+    comments    Comment[]
+    medias      Media[]
+}
+
+model Post {
+    id          Int             @id @default(autoincrement())
+    isCollected Boolean         @default(false)
+    createdAt   DateTime        @default(now())
+    updatedAt   DateTime        @updatedAt
+    postGroupId Int
+    postGroup   PostGroup       @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
+    collection  PostCollection?
+
+    @@index([postGroupId])
+    @@index([isCollected])
+}
+
+model PostCollection {
+    id          Int       @id @default(autoincrement())
+    postId      Int       @unique
+    post        Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+    userId      String
+    user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    postGroupId Int
+    postGroup   PostGroup @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
+    collectedAt DateTime  @default(now())
+
+    @@unique([postGroupId, userId])
+    @@index([userId])
+    @@index([postGroupId])
 }
 
 // Necessary for Next auth
@@ -293,15 +391,12 @@ model Session {
 }
 
 model User {
-    id            String    @id @default(cuid())
-    name          String?   @unique
-    email         String?   @unique
-    bio           String?
-    coverImage    String?
-    pronouns      String?
-    image         String?
-    emailVerified DateTime?
-
+    id                String    @id @default(cuid())
+    name              String?
+    email             String?   @unique
+    bio               String?
+    image             String?
+    emailVerified     DateTime?
     firstSignUpMethod String? // e.g. email, google, github, etc.
 
     joinedAt         DateTime?          @default(now())
@@ -324,12 +419,28 @@ model User {
     Bounty                   Bounty[]
     BountyDoubt              BountyDoubt[]
     BountyDoubtMessage       BountyDoubtMessage[]
+    BountyWinner             BountyWinner[]
+    RedeemConsumer           RedeemConsumer[]
+    bountyRedeems            BountyRedeem[]
+    creditBalance            CreditBalance?
+    temporalFollows          TemporalFollow[]
+    lastFMAccount            LastFMAccount?
 
-    BountyWinner BountyWinner[]
+    postCollections PostCollection[]
+}
 
-    RedeemConsumer RedeemConsumer[]
-
-    QRItem QRItem[]
+model LastFMAccount {
+    id          String  @id @default(cuid())
+    username    String
+    realName    String?
+    country     String
+    sessionKey  String  @unique
+    profileUrl  String
+    image       String?
+    playCount   Int     @default(0)
+    userId      String  @unique
+    isConnected Boolean @default(false)
+    user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model VerificationToken {
@@ -390,7 +501,8 @@ enum ItemPrivacy {
     FOR_SALE
     NOT_FOR_SALE
     PUBLIC
-    PRIVATE // only for followers
+    FOLLOWER // only for followers
+    PRIVATE // only for members
     TIER // tier based
 }
 
@@ -407,26 +519,65 @@ model Asset {
     issuer        String
     issuerPrivate String?
 
-    mediaType MediaType
-    mediaUrl  String
-    thumbnail String
+    mediaType    MediaType
+    mediaUrl     String
+    thumbnail    String
+    demoMediaUrl String?
 
-    privacy ItemPrivacy @default(PUBLIC)
+    fundEndDate DateTime?
 
-    creatorId String? // if null then it is admin asset
-    creator   Creator? @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    releaseDate DateTime?
+    privacy     ItemPrivacy @default(PUBLIC)
+    percentage  Float? // this is the percentage of the asset
+    creatorId   String? // if null then it is admin asset
+    creator     Creator?    @relation(fields: [creatorId], references: [id], onDelete: Cascade)
 
-    tierId Int?
-    tier   Subscription? @relation(fields: [tierId], references: [id], onDelete: SetNull)
-
+    tierId        Int?
+    tier          Subscription?   @relation(fields: [tierId], references: [id], onDelete: SetNull)
+    isQRItem      Boolean         @default(false)
     song          Song?
     buyers        User_Asset[]
     marketItems   MarketAsset[]
     LocationGroup LocationGroup[]
     Redeem        Redeem[]
+    createdAt     DateTime        @default(now())
+    royaltyReport RoyaltyReport[]
+    Stem          Stem[]
 
     @@unique([code, issuer])
     @@index([name, description])
+}
+
+model Stem {
+    id          Int     @id @default(autoincrement())
+    audioFileId String? // Foreign key to the audio file
+    name        String // Name of the stem
+    startTime   Float // Start time in seconds
+    endTime     Float // End time in seconds
+    volume      Float // Volume level (0.0 to 1.0)
+    muted       Boolean @default(false) // Whether the stem is muted
+    soloed      Boolean @default(false) // Whether the stem is soloed
+    trimStart   Float // Optional trim start time in seconds
+    trimEnd     Float // Optional trim end time in seconds
+    trackIndex  Int // Index of the track in the audio file
+    steamUrl    String // URL of the stem audio file
+    color       String
+    assetId     Int
+    asset       Asset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now())
+}
+
+model RoyaltyReport {
+    id        Int      @id @default(autoincrement())
+    mediaUrl  String
+    mediaName String
+    mediaSize Int
+    mediaType String
+    assetId   Int
+    asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 }
 
 // this will eliminate asset buy modal overhead.
@@ -434,13 +585,14 @@ enum MarketType {
     SONG
     ADMIN
     FAN
+    ROYALTY // for creators
 }
 
 // this for creators;
 model MarketAsset {
-    id Int @id @default(autoincrement())
-
-    privacy ItemPrivacy @default(PUBLIC)
+    id       Int         @id @default(autoincrement())
+    isQRItem Boolean     @default(false)
+    privacy  ItemPrivacy @default(PUBLIC)
 
     price    Float
     priceUSD Float @default(1)
@@ -450,31 +602,14 @@ model MarketAsset {
     assetId Int
     asset   Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
-    placedAt  DateTime @default(now())
-    createdAt DateTime @default(now())
+    placedAt DateTime @default(now())
 
     placerId String? // admin placing this assets
     placer   Creator? @relation(fields: [placerId], references: [id], onDelete: Cascade)
 
+    createdAt DateTime @default(now())
+
     @@unique([assetId, placerId])
-}
-
-model SellPageAsset {
-    id           Int      @id @default(autoincrement())
-    title        String
-    description  String?
-    amountToSell Int
-    price        Float
-    priceUSD     Float    @default(1)
-    priceXLM     Float    @default(0)
-    isSold       Boolean  @default(false)
-    placedAt     DateTime @default(now())
-
-    placerId String? // admin placing this assets
-    placer   Creator?  @relation(fields: [placerId], references: [id], onDelete: Cascade)
-    soldAt   DateTime? @default(now())
-
-    @@unique([id, placerId])
 }
 
 // ------------------------Wallete SCHEMA-------------------------
@@ -527,26 +662,23 @@ model Admin {
 }
 
 // ------------------------Mapping SCHEMA-------------------------
+
 model Hotspot {
     id        String  @id @default(cuid())
     creatorId String
     creator   Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
 
-    // Drop schedule
-    dropEveryDays    Int // interval in days between drops
-    pinDurationDays  Int // lifetime of each dropped LocationGroup (days)
-    hotspotStartDate DateTime // when the first drop fires
-    hotspotEndDate   DateTime // after this no new drops
+    dropEveryDays    Int
+    pinDurationDays  Int
+    hotspotStartDate DateTime
+    hotspotEndDate   DateTime
 
-    // Colletion
-    autoCollect Boolean @default(false) // if true then it will automatically collect from users when they come in the geo fence, otherwise they need to manually click collect button
-    multiPin    Boolean @default(false) // if true then it will drop multiple pins in the geo fence, otherwise it will drop only one pin
+    autoCollect Boolean @default(false)
+    multiPin    Boolean @default(false)
 
-    // Geo
-    shape   String // "circle" | "square" | "polygon"
-    geoJson Json // GeoJSON Feature
+    shape   String
+    geoJson Json
 
-    // QStash
     qstashScheduleId String?
     isActive         Boolean  @default(true)
     hidden           Boolean  @default(false)
@@ -664,37 +796,49 @@ model LocationConsumer {
 }
 
 model Bounty {
-    id                 Int                 @id @default(autoincrement())
-    title              String
-    description        String
-    priceInUSD         Float
-    priceInBand        Float
-    totalWinner        Int
-    currentWinnerCount Int                 @default(0)
-    priceInXLM         Float?
-    requiredBalance    Float
-    imageUrls          String[]
-    createdAt          DateTime            @default(now())
-    endDate            DateTime?
-    status             BountyStatus        @default(PENDING)
-    creatorId          String
-    creator            Creator             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-    participants       BountyParticipant[] // Users who join the bounty
-    comments           BountyComment[] // Comments on the bounty
-    submissions        BountySubmission[] // Submissions to the bounty
-    doubts             BountyDoubt[]
-    BountyWinner       BountyWinner[]
-    User               User?               @relation(fields: [userId], references: [id])
-    userId             String?
+    id                    Int                 @id @default(autoincrement())
+    title                 String
+    description           String
+    latitude              Float?
+    longitude             Float?
+    radius                Float?
+    priceInUSD            Float
+    priceInBand           Float
+    payNow                Boolean             @default(false)
+    totalWinner           Int
+    currentWinnerCount    Int                 @default(0)
+    priceInXLM            Float?
+    requiredBalance       Float?
+    requiredBalanceCode   String?
+    requiredBalanceIssuer String?
+    imageUrls             String[]
+    createdAt             DateTime            @default(now())
+    endDate               DateTime?
+    status                BountyStatus        @default(PENDING)
+    creatorId             String
+    creator               Creator             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    participants          BountyParticipant[] // Users who join the bounty
+    comments              BountyComment[] // Comments on the bounty
+    submissions           BountySubmission[] // Submissions to the bounty
+    doubts                BountyDoubt[]
+    BountyWinner          BountyWinner[]
+    User                  User?               @relation(fields: [userId], references: [id])
+    userId                String?
+    bountyType            BountyType          @default(GENERAL)
+
+    bountyRedeems BountyRedeem[]
+    bountyTracks  BountyTrack[]
 
     @@index([title, description])
 }
 
 model BountyWinner {
-    id        Int      @id @default(autoincrement())
-    bountyId  Int
-    xdr       String?
+    id       Int     @id @default(autoincrement())
+    bountyId Int
+    xdr      String?
+
     isSwaped  Boolean? @default(false)
+    isClaimed Boolean  @default(false)
     bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
     userId    String
     user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -710,6 +854,18 @@ model BountyDoubt {
     updatedAt DateTime?            @updatedAt
     createdAt DateTime             @default(now())
     messages  BountyDoubtMessage[] // Relationship for messages between user and creator
+}
+
+enum BountyType {
+    GENERAL
+    LOCATION_BASED
+    MUSIC
+}
+
+enum MusicPlatform {
+    SPOTIFY
+    LASTFM
+    YOUTUBE
 }
 
 model BountyDoubtMessage {
@@ -737,7 +893,8 @@ model BountyParticipant {
     userId String
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    joinedAt DateTime @default(now())
+    joinedAt              DateTime              @default(now())
+    bountyTrackProgresses BountyTrackProgress[]
 
     @@unique([bountyId, userId])
 }
@@ -797,6 +954,58 @@ enum SubmissionViewType {
 
 // I want to add asset redeeming feature
 
+model BountyRedeem {
+    id               Int             @id @default(autoincrement())
+    bountyId         Int
+    bounty           Bounty          @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+    code             String
+    isMarkedUsed     Boolean         @default(false)
+    isRedeemed       Boolean         @default(false)
+    redeemedBy       String?
+    redeemUserId     String?
+    redeemedUser     User?           @relation(fields: [redeemedBy], references: [id], onDelete: SetNull)
+    redeemedAt       DateTime?
+    createdAt        DateTime        @default(now())
+    redeemConsumer   RedeemConsumer? @relation(fields: [redeemConsumerId], references: [id])
+    redeemConsumerId Int?
+
+    @@unique([bountyId, code])
+}
+
+model BountyTrack {
+    id                Int                   @id @default(autoincrement())
+    bountyId          Int
+    bounty            Bounty                @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+    trackName         String
+    artistName        String
+    trackUrl          String // LastFM track URL (source of truth)
+    spotifyUrl        String? // optional Spotify link for playback
+    youtubeUrl        String? // optional YouTube link (future)
+    albumName         String?
+    albumCoverUrl     String?
+    platform          MusicPlatform // where the song was sourced from
+    requiredPlayCount Int // creator sets this (e.g. 3)
+    createdAt         DateTime              @default(now())
+    progress          BountyTrackProgress[]
+
+    @@unique([bountyId, trackUrl])
+}
+
+model BountyTrackProgress {
+    id                Int               @id @default(autoincrement())
+    bountyTrackId     Int
+    bountyTrack       BountyTrack       @relation(fields: [bountyTrackId], references: [id], onDelete: Cascade)
+    participantId     Int
+    participant       BountyParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+    currentPlayCount  Int               @default(0)
+    baselinePlayCount Int               @default(0) // to track plays before joining the bounty
+    isCompleted       Boolean           @default(false)
+    lastVerifiedAt    DateTime?
+    updatedAt         DateTime          @updatedAt
+
+    @@unique([bountyTrackId, participantId])
+}
+
 model Redeem {
     code            String           @id
     totalRedeemable Int
@@ -806,79 +1015,139 @@ model Redeem {
 }
 
 model RedeemConsumer {
-    id         Int      @id @default(autoincrement())
-    userId     String
-    user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-    code       String
-    redeemCode Redeem   @relation(fields: [code], references: [code], onDelete: Cascade)
-    redeemedAt DateTime @default(now())
+    id            Int            @id @default(autoincrement())
+    userId        String
+    user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+    code          String
+    redeemCode    Redeem         @relation(fields: [code], references: [code], onDelete: Cascade)
+    redeemedAt    DateTime       @default(now())
+    bountyRedeems BountyRedeem[]
 }
 
-model QRItem {
-    id           String   @id @default(cuid())
+model SellPageAsset {
+    id           Int      @id @default(autoincrement())
     title        String
-    modelUrl     String
-    externalLink String?
-    startDate    DateTime
-    endDate      DateTime
-    qrCode       String   @db.Text
-    isActive     Boolean  @default(true)
-    creatorId    String
-    createdAt    DateTime @default(now())
-    updatedAt    DateTime @updatedAt
+    description  String?
+    amountToSell Int
+    price        Float
+    priceUSD     Float    @default(1)
+    priceXLM     Float    @default(0)
+    isSold       Boolean  @default(false)
+    placedAt     DateTime @default(now())
 
-    // Relations
-    creator      User            @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-    descriptions QRDescription[]
+    placerId String? // admin placing this assets
+    placer   Creator?  @relation(fields: [placerId], references: [id], onDelete: Cascade)
+    soldAt   DateTime? @default(now())
 
-    @@unique([id, creatorId])
+    @@unique([id, placerId])
 }
 
-model QRDescription {
-    id       String @id @default(cuid())
-    title    String @db.VarChar(50)
-    content  String @db.Text
-    order    Int
-    qrItemId String
+model CreatorCustomDomain {
+    id String @id @default(cuid())
 
-    // Relations
-    qrItem QRItem @relation(fields: [qrItemId], references: [id], onDelete: Cascade)
+    domain String @unique
 
-    @@unique([qrItemId, order]) // Ensure unique order per QR item
-    @@index([qrItemId, order])
+    creatorId String @unique
+
+    creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
 }
 
-// Pin Agent Chat Session
-model PinAgentChatSession {
+model GenerationJob {
+    id        String   @id @default(cuid())
+    userId    String
+    status    String   @default("pending") // pending | processing | completed | failed
+    progress  Int?
+    message   String?
+    error     String?
+    result    Json? // stores { items: [{ type, url }] }
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([userId])
+}
+
+model AiGeneratedContent {
+    id          Int       @id @default(autoincrement())
+    creatorId   String
+    creator     Creator   @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    prompt      String
+    contentUrl  String
+    contentType MediaType
+    createdAt   DateTime  @default(now())
+    creditsUsed Float     @default(0) // Credits consumed for this generation
+    tokensUsed  Int? // Token count for this generation
+    model       String? // AI model used
+}
+
+model CreditBalance {
+    id        String   @id @default(cuid())
+    userId    String   @unique
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    balance   Float    @default(0) // Current credit balance
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    transactions CreditTransaction[]
+}
+
+enum TransactionType {
+    PURCHASE
+    USAGE
+    REFUND
+    BONUS
+}
+
+model CreditTransaction {
+    id              String          @id @default(cuid())
+    userId          String
+    creditBalance   CreditBalance   @relation(fields: [userId], references: [userId], onDelete: Cascade)
+    amount          Float // Positive for credits added, negative for credits used
+    type            TransactionType
+    description     String
+    paymentMethod   String? // e.g., "BANDCOIN", "USDC"
+    paymentAmount   Float? // Amount paid in BANDCOIN or USDC
+    transactionHash String? // Blockchain transaction hash
+    metadata        Json? // Store additional info like prompt, model, tokens, etc.
+    createdAt       DateTime        @default(now())
+
+    @@index([userId, createdAt])
+}
+
+model CreditPackage {
+    id          String   @id @default(cuid())
+    name        String
+    credits     Float // Number of credits in package
+    priceBand   Float // Price in BANDCOIN
+    priceUSDC   Float // Price in USDC
+    isPopular   Boolean  @default(false)
+    bonus       Float    @default(0) // Bonus credits
+    description String?
+    isActive    Boolean  @default(true)
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+}
+
+model GeoCache {
+    key       String   @id
+    value     String   @db.Text
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model AgentJob {
     id        String  @id @default(cuid())
     creatorId String
-    creator   Creator @relation("pinAgentSessions", fields: [creatorId], references: [id], onDelete: Cascade)
+    creator   Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
 
-    title    String
-    messages PinAgentChatHistory[]
+    status  String  @default("pending")
+    result  Json?
+    error   String?
+    payload Json // ← add this
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
-    @@index([creatorId, updatedAt])
-}
-
-// Pin Agent Chat History
-model PinAgentChatHistory {
-    id        String  @id @default(cuid())
-    creatorId String
-    creator   Creator @relation("pinAgentMessages", fields: [creatorId], references: [id], onDelete: Cascade)
-
-    sessionId String
-    session   PinAgentChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
-    role    String // "user" or "assistant"
-    content String @db.Text
-
-    createdAt DateTime @default(now())
-
     @@index([creatorId, createdAt])
-    @@index([sessionId, createdAt])
 }
 
 model LocationGroupJob {
@@ -901,27 +1170,4 @@ model LocationGroupJob {
     creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
 
     @@index([creatorId, createdAt])
-}
-
-model AgentJob {
-    id        String  @id @default(cuid())
-    creatorId String
-    creator   Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-
-    status  String  @default("pending")
-    result  Json?
-    error   String?
-    payload Json // ← add this
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([creatorId, createdAt])
-}
-
-model GeoCache {
-    key       String   @id
-    value     String   @db.Text
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
 }

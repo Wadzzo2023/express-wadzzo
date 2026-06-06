@@ -84,6 +84,7 @@ app.use(
 
 // ── Graceful error handling ───────────────────────────────────────────────────
 process.on("uncaughtException", (err) => {
+    console.error("[process] Uncaught exception raw:", err);
     logger.error("[process] Uncaught exception:", err.message, err.stack);
 });
 
