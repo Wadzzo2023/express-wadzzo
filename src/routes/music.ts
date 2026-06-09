@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { BlockedReason, GoogleGenAI } from "@google/genai";
 import { Router, type IRouter, } from "express";
 import type { Request, Response } from "express";
 import type { WebSocket } from "ws";
@@ -139,159 +139,158 @@ musicRouter.post(
     "/generate",
     (req: Request<object, object, GenerateBody>, res: Response) => {
         void (async () => {
-        try {
-            const {
-                prompt,
-                userId,
-                model = "lyria-3-pro-preview",
-                format = "wav",
-            } = req.body;
+            try {
+                const {
+                    prompt,
+                    userId,
+                    model = "lyria-3-pro-preview",
+                    format = "wav",
+                } = req.body;
 
-            if (!userId?.trim()) {
-                res.status(400).json({ error: "userId is required" });
-                return;
-            }
-
-            if (!prompt?.trim()) {
-                res.status(400).json({ error: "prompt is required" });
-                return;
-            }
-
-            const creditCost = model === "lyria-3-clip-preview"
-                ? MUSIC_CREDITS.CLIP
-                : MUSIC_CREDITS.FULL_SONG;
-
-            const creditResult = await checkAndDeductCredits(
-                userId,
-                creditCost,
-                `Music generation: ${model === "lyria-3-clip-preview" ? "clip" : "full song"}`,
-                { model, format, prompt: prompt.substring(0, 200) },
-            );
-
-            if (!creditResult.success) {
-                res.status(402).json({
-                    error: creditResult.error,
-                    requiredCredits: creditCost,
-                });
-                return;
-            }
-
-            logger.info(
-                `[music] Generating full song — model=${model} format=${format}`
-            );
-            logger.info(`[music] Prompt: ${prompt.substring(0, 300)}`);
-
-            // Full song generation can take several minutes
-            res.setTimeout(5 * 60 * 1000);
-
-            const ai = new GoogleGenAI({ apiKey: getApiKey() });
-
-            // WAV is Pro-only; clip model gets no config (always MP3)
-            const isProModel = model === "lyria-3-pro-preview";
-            const useWav = isProModel && format === "wav";
-            const defaultMime = useWav ? "audio/wav" : "audio/mp3";
-
-            const config: Record<string, unknown> = useWav
-                ? {
-                    responseModalities: ["AUDIO", "TEXT"],
-                    responseFormat: {
-                        audio: { mimeType: "audio/wav" },
-                    },
+                if (!userId?.trim()) {
+                    res.status(400).json({ error: "userId is required" });
+                    return;
                 }
-                : {};
 
-            const response = await ai.models.generateContent({
-                model,
-                contents: prompt,
-                config,
-            });
+                if (!prompt?.trim()) {
+                    res.status(400).json({ error: "prompt is required" });
+                    return;
+                }
 
-            // Check if prompt was blocked
-            if (!response.candidates?.length) {
-                const feedback = response.promptFeedback;
-                const httpStatus =
-                    response.sdkHttpResponse?.status;
-                logger.error(
-                    `[music] No candidates — HTTP ${httpStatus}, promptFeedback: ${JSON.stringify(feedback)}`
+                const creditCost = model === "lyria-3-clip-preview"
+                    ? MUSIC_CREDITS.CLIP
+                    : MUSIC_CREDITS.FULL_SONG;
+
+                const creditResult = await checkAndDeductCredits(
+                    userId,
+                    creditCost,
+                    `Music generation: ${model === "lyria-3-clip-preview" ? "clip" : "full song"}`,
+                    { model, format, prompt: prompt.substring(0, 200) },
                 );
 
-                let reason = "Prompt was blocked by the model";
-                if (feedback?.blockReason === "OTHER") {
-                    reason =
-                        "Blocked: the lyrics may resemble copyrighted content, " +
-                        "or the prompt triggered a content filter. " +
-                        "Try with original lyrics or a simpler description.";
-                } else if (feedback?.blockReason === "SAFETY") {
-                    reason =
-                        "Blocked: prompt was flagged by safety filters.";
+                if (!creditResult.success) {
+                    res.status(402).json({
+                        error: creditResult.error,
+                        requiredCredits: creditCost,
+                    });
+                    return;
                 }
 
-                res.status(400).json({
-                    error: reason,
-                    blockReason: feedback?.blockReason,
+                logger.info(
+                    `[music] Generating full song — model=${model} format=${format}`
+                );
+                logger.info(`[music] Prompt: ${prompt.substring(0, 300)}`);
+
+                // Full song generation can take several minutes
+                res.setTimeout(5 * 60 * 1000);
+
+                const ai = new GoogleGenAI({ apiKey: getApiKey() });
+
+                // WAV is Pro-only; clip model gets no config (always MP3)
+                const isProModel = model === "lyria-3-pro-preview";
+                const useWav = isProModel && format === "wav";
+                const defaultMime = useWav ? "audio/wav" : "audio/mp3";
+
+                const config: Record<string, unknown> = useWav
+                    ? {
+                        responseModalities: ["AUDIO", "TEXT"],
+                        responseFormat: {
+                            audio: { mimeType: "audio/wav" },
+                        },
+                    }
+                    : {};
+
+                const response = await ai.models.generateContent({
+                    model,
+                    contents: prompt,
+                    config,
                 });
-                return;
-            }
 
-            const parts =
-                response.candidates[0]?.content?.parts ?? [];
+                // Check if prompt was blocked
+                if (!response.candidates?.length) {
+                    const feedback = response.promptFeedback;
 
-            if (parts.length === 0) {
-                res.status(500).json({
-                    error: "No parts in response from Lyria",
-                });
-                return;
-            }
+                    logger.error(
+                        `[music] No candidates  promptFeedback: ${JSON.stringify(feedback)}`
+                    );
 
-            let audioData: string | null = null;
-            let audioMimeType = defaultMime;
-            let textResponse = "";
+                    let reason = "Prompt was blocked by the model";
+                    if (feedback?.blockReason === BlockedReason.OTHER) {
+                        reason =
+                            "Blocked: the lyrics may resemble copyrighted content, " +
+                            "or the prompt triggered a content filter. " +
+                            "Try with original lyrics or a simpler description.";
+                    } else if (feedback?.blockReason === BlockedReason.SAFETY) {
+                        reason =
+                            "Blocked: prompt was flagged by safety filters.";
+                    }
 
-            for (const part of parts) {
-                if (part.inlineData?.data) {
-                    audioData = part.inlineData.data;
-                    audioMimeType =
-                        part.inlineData.mimeType ?? defaultMime;
+                    res.status(400).json({
+                        error: reason,
+                        blockReason: feedback?.blockReason,
+                    });
+                    return;
                 }
-                if (part.text) {
-                    textResponse += part.text;
-                }
-            }
 
-            if (!audioData) {
-                res.status(500).json({
-                    error:
-                        "No audio generated — model returned text only",
+                const parts =
+                    response.candidates[0]?.content?.parts ?? [];
+
+                if (parts.length === 0) {
+                    res.status(500).json({
+                        error: "No parts in response from Lyria",
+                    });
+                    return;
+                }
+
+                let audioData: string | null = null;
+                let audioMimeType = defaultMime;
+                let textResponse = "";
+
+                for (const part of parts) {
+                    if (part.inlineData?.data) {
+                        audioData = part.inlineData.data;
+                        audioMimeType =
+                            part.inlineData.mimeType ?? defaultMime;
+                    }
+                    if (part.text) {
+                        textResponse += part.text;
+                    }
+                }
+
+                if (!audioData) {
+                    res.status(500).json({
+                        error:
+                            "No audio generated — model returned text only",
+                        text: textResponse || undefined,
+                    });
+                    return;
+                }
+
+                logger.info(
+                    `[music] Full song generated (${audioMimeType}, ${Math.round(audioData.length / 1024)}KB base64)`
+                );
+
+                res.json({
+                    audio: audioData,
+                    mimeType: audioMimeType,
                     text: textResponse || undefined,
+                    creditsUsed: creditCost,
+                    remainingBalance: creditResult.remainingBalance,
                 });
-                return;
+            } catch (error) {
+                const msg =
+                    error instanceof Error
+                        ? error.message
+                        : String(error);
+                const stack =
+                    error instanceof Error ? error.stack : undefined;
+                logger.error(
+                    "[music] Generation failed:",
+                    msg,
+                    stack
+                );
+                res.status(500).json({ error: msg });
             }
-
-            logger.info(
-                `[music] Full song generated (${audioMimeType}, ${Math.round(audioData.length / 1024)}KB base64)`
-            );
-
-            res.json({
-                audio: audioData,
-                mimeType: audioMimeType,
-                text: textResponse || undefined,
-                creditsUsed: creditCost,
-                remainingBalance: creditResult.remainingBalance,
-            });
-        } catch (error) {
-            const msg =
-                error instanceof Error
-                    ? error.message
-                    : String(error);
-            const stack =
-                error instanceof Error ? error.stack : undefined;
-            logger.error(
-                "[music] Generation failed:",
-                msg,
-                stack
-            );
-            res.status(500).json({ error: msg });
-        }
         })();
     }
 );
