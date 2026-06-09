@@ -3,6 +3,49 @@ import { Router, type IRouter, } from "express";
 import type { Request, Response } from "express";
 import type { WebSocket } from "ws";
 import { logger } from "../lib/logger.js";
+import { db } from "../lib/db.js";
+
+// ── Credit costs per generation type ────────────────────────────────────────
+export const MUSIC_CREDITS = {
+    CLIP: 0.5,       // lyria-3-clip-preview  (~30s clip)
+    FULL_SONG: 1.0,  // lyria-3-pro-preview   (full-length song)
+    STREAMING: 0.3,  // lyria-realtime-exp     (per session)
+} as const;
+
+async function checkAndDeductCredits(
+    userId: string,
+    credits: number,
+    description: string,
+    metadata?: Record<string, string | number>,
+): Promise<{ success: true; remainingBalance: number } | { success: false; error: string }> {
+    const balance = await db.creditBalance.findUnique({
+        where: { userId },
+    });
+
+    if (!balance || balance.balance < credits) {
+        return {
+            success: false,
+            error: `Insufficient credits. Required: ${credits}, available: ${balance?.balance ?? 0}`,
+        };
+    }
+
+    const updatedBalance = await db.creditBalance.update({
+        where: { userId },
+        data: { balance: { decrement: credits } },
+    });
+
+    await db.creditTransaction.create({
+        data: {
+            userId,
+            amount: -credits,
+            type: "USAGE",
+            description,
+            metadata: metadata ? JSON.parse(JSON.stringify(metadata)) : undefined,
+        },
+    });
+
+    return { success: true, remainingBalance: updatedBalance.balance };
+}
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -57,6 +100,7 @@ interface ClientMessage {
     | "setConfig"
     | "resetContext"
     | "disconnect";
+    userId?: string;
     prompts?: WeightedPrompt[];
     config?: LiveMusicGenerationConfig;
 }
@@ -86,6 +130,7 @@ const musicRouter: IRouter = Router();
 
 interface GenerateBody {
     prompt: string;
+    userId: string;
     model?: "lyria-3-clip-preview" | "lyria-3-pro-preview";
     format?: "mp3" | "wav";
 }
@@ -97,12 +142,37 @@ musicRouter.post(
         try {
             const {
                 prompt,
+                userId,
                 model = "lyria-3-pro-preview",
                 format = "wav",
             } = req.body;
 
+            if (!userId?.trim()) {
+                res.status(400).json({ error: "userId is required" });
+                return;
+            }
+
             if (!prompt?.trim()) {
                 res.status(400).json({ error: "prompt is required" });
+                return;
+            }
+
+            const creditCost = model === "lyria-3-clip-preview"
+                ? MUSIC_CREDITS.CLIP
+                : MUSIC_CREDITS.FULL_SONG;
+
+            const creditResult = await checkAndDeductCredits(
+                userId,
+                creditCost,
+                `Music generation: ${model === "lyria-3-clip-preview" ? "clip" : "full song"}`,
+                { model, format, prompt: prompt.substring(0, 200) },
+            );
+
+            if (!creditResult.success) {
+                res.status(402).json({
+                    error: creditResult.error,
+                    requiredCredits: creditCost,
+                });
                 return;
             }
 
@@ -205,6 +275,8 @@ musicRouter.post(
                 audio: audioData,
                 mimeType: audioMimeType,
                 text: textResponse || undefined,
+                creditsUsed: creditCost,
+                remainingBalance: creditResult.remainingBalance,
             });
         } catch (error) {
             const msg =
@@ -220,6 +292,48 @@ musicRouter.post(
             );
             res.status(500).json({ error: msg });
         }
+        })();
+    }
+);
+
+musicRouter.get("/credits", (_req: Request, res: Response) => {
+    res.json({
+        costs: {
+            clip: MUSIC_CREDITS.CLIP,
+            fullSong: MUSIC_CREDITS.FULL_SONG,
+            streaming: MUSIC_CREDITS.STREAMING,
+        },
+    });
+});
+
+musicRouter.get(
+    "/check-balance",
+    (req: Request, res: Response) => {
+        void (async () => {
+            try {
+                const userId = req.query.userId as string | undefined;
+                if (!userId?.trim()) {
+                    res.status(400).json({ error: "userId query param is required" });
+                    return;
+                }
+
+                const balance = await db.creditBalance.findUnique({
+                    where: { userId },
+                });
+
+                res.json({
+                    balance: balance?.balance ?? 0,
+                    costs: {
+                        clip: MUSIC_CREDITS.CLIP,
+                        fullSong: MUSIC_CREDITS.FULL_SONG,
+                        streaming: MUSIC_CREDITS.STREAMING,
+                    },
+                });
+            } catch (error) {
+                const msg = error instanceof Error ? error.message : String(error);
+                logger.error("[music] Check balance failed:", msg);
+                res.status(500).json({ error: msg });
+            }
         })();
     }
 );
@@ -251,6 +365,8 @@ export function handleMusicWebSocket(ws: WebSocket): void {
     let session: LyriaSession | null = null;
     let isConnected = false;
     let isConnecting = false;
+    let wsUserId: string | null = null;
+    let sessionCreditCharged = false;
 
     const send = (data: object) => {
         if (ws.readyState === OPEN) {
@@ -400,10 +516,44 @@ export function handleMusicWebSocket(ws: WebSocket): void {
 
                 switch (msg.type) {
                     case "connect":
+                        if (!msg.userId?.trim()) {
+                            send({ type: "error", message: "userId is required" });
+                            return;
+                        }
+                        wsUserId = msg.userId;
+                        sessionCreditCharged = false;
                         await connectToLyria();
                         break;
                     case "play":
-                        if (session) session.play();
+                        if (!wsUserId) {
+                            send({ type: "error", message: "Not authenticated. Send userId with connect." });
+                            return;
+                        }
+                        if (session) {
+                            if (!sessionCreditCharged) {
+                                const creditResult = await checkAndDeductCredits(
+                                    wsUserId,
+                                    MUSIC_CREDITS.STREAMING,
+                                    "Music streaming: real-time session",
+                                    { model: "lyria-realtime-exp" },
+                                );
+                                if (!creditResult.success) {
+                                    send({
+                                        type: "error",
+                                        message: creditResult.error,
+                                        requiredCredits: MUSIC_CREDITS.STREAMING,
+                                    } as object);
+                                    return;
+                                }
+                                sessionCreditCharged = true;
+                                send({
+                                    type: "creditsDeducted",
+                                    creditsUsed: MUSIC_CREDITS.STREAMING,
+                                    remainingBalance: creditResult.remainingBalance,
+                                });
+                            }
+                            session.play();
+                        }
                         break;
                     case "pause":
                         if (session) session.pause();
