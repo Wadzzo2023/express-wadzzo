@@ -5,6 +5,7 @@ import { randomLocation } from "../lib/map.js";
 import { logger } from "../lib/logger.js";
 import type { Pin, PinOptions } from "../agent/types.js";
 import { enrichPinFromGooglePlace } from "../lib/google-place-enrichment.js";
+import { createOptimizedImage } from "../lib/image-optimizer.js";
 import pLimit from "p-limit";
 
 const ENRICHMENT_CONCURRENCY = 5;
@@ -125,6 +126,10 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
             };
         });
 
+        const optimizedImage = base.image
+            ? await createOptimizedImage(base.image).catch(() => null)
+            : null;
+
         const locationGroup = await db.locationGroup.create({
             data: {
                 creatorId,
@@ -135,6 +140,7 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
                 limit: base.pinCollectionLimit ?? 999999,
                 remaining: base.pinCollectionLimit ?? 999999,
                 image: base.image ?? null,
+                optimizedImage,
                 latitude: base.latitude,
                 longitude: base.longitude,
                 radius: base.radius ?? 2,
@@ -173,6 +179,10 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
                             };
                         });
 
+                        const optimizedImage = pin.image
+                            ? await createOptimizedImage(pin.image).catch(() => null)
+                            : null;
+
                         const locationGroup = await db.locationGroup.create({
                             data: {
                                 creatorId,
@@ -183,6 +193,7 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
                                 limit: pin.pinCollectionLimit ?? 999999,
                                 remaining: pin.pinCollectionLimit ?? 999999,
                                 image: pin.image ?? null,
+                                optimizedImage,
                                 latitude: pin.latitude,
                                 longitude: pin.longitude,
                                 radius: pin.radius ?? 2,

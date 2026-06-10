@@ -101,6 +101,7 @@ export async function dropPinsForHotspot(
             title: lastGroup.title,
             description: lastGroup.description,
             image: lastGroup.image,
+            optimizedImage: lastGroup.optimizedImage,
             link: lastGroup.link,
             type: lastGroup.type,
             latitude: lastGroup.latitude,
