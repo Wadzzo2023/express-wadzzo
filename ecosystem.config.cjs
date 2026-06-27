@@ -3,7 +3,7 @@ module.exports = {
     {
       name: "express-server",
       script: "dist/index.js",
-      cwd: "/home/ec2-user/code/express-wadzzo",
+      cwd: "/home/ec2-user/code/express-actionverse",
       instances: 1,
       autorestart: true,
       max_restarts: 50,
