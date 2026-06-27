@@ -248,12 +248,14 @@ model Creator {
     createdAt          DateTime            @default(now())
     Appearance         Appearance[]
 
-    SellPageAsset     SellPageAsset[]
-    temporalFollows   TemporalFollow[]
-    hotspots          Hotspot[]
-    locationTags      LocationTag[]
-    locationGroupJobs LocationGroupJob[]
-    agentJobs         AgentJob[]
+    SellPageAsset        SellPageAsset[]
+    temporalFollows      TemporalFollow[]
+    hotspots             Hotspot[]
+    locationTags         LocationTag[]
+    locationGroupJobs    LocationGroupJob[]
+    agentJobs            AgentJob[]
+    creatorGalleries     CreatorGallery[]
+    gallerySlotOverrides GallerySlotOverride[]
 
     @@index([bio, name])
 }
@@ -392,6 +394,7 @@ model User {
     BountyParticipant                BountyParticipant[]
     BountySubmission                 BountySubmission[]
     BountyWinner                     BountyWinner[]
+    gallerySlotLikes                 GallerySlotLike[]
 }
 
 model VerificationToken {
@@ -1190,4 +1193,45 @@ model BountyWinner {
     @@unique([bountyId, userId])
     @@index([bountyId])
     @@index([userId])
+}
+
+model CreatorGallery {
+    creatorId          String   @id
+    creator            Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    musicURL           String?
+    creatorTitle       String?
+    creatorDescription String?
+    updatedAt          DateTime @updatedAt
+    createdAt          DateTime @default(now())
+}
+
+model GallerySlotOverride {
+    id                 Int      @id @default(autoincrement())
+    slotId             String
+    imageUrl           String?
+    title              String?
+    description        String?
+    aspectRatio        String?
+    photoDescription   String?
+    photoDescPlacement String?
+    gridCell           Int?
+    creatorId          String
+    creator            Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    updatedAt          DateTime @updatedAt
+    createdAt          DateTime @default(now())
+
+    @@unique([slotId, creatorId])
+    @@index([creatorId])
+}
+
+model GallerySlotLike {
+    id        Int      @id @default(autoincrement())
+    slotId    String
+    creatorId String
+    userId    String
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    createdAt DateTime @default(now())
+
+    @@unique([slotId, creatorId, userId])
+    @@index([slotId, creatorId])
 }
