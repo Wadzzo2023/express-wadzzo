@@ -634,11 +634,11 @@ model LocationGroup {
 model Location {
     id String @id @default(cuid())
 
-    latitude    Float
-    longitude   Float
-    hidden      Boolean @default(false)
-    autoCollect Boolean
+    latitude  Float
+    longitude Float
 
+    autoCollect     Boolean
+    hidden          Boolean        @default(false)
     locationGroupId String?
     locationGroup   LocationGroup? @relation(fields: [locationGroupId], references: [id], onDelete: Cascade)
 
@@ -652,11 +652,9 @@ model LocationConsumer {
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
     locationId String
-    location   Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
-    redeemCode String    @unique
-    isRedeemed Boolean   @default(false)
-    redeemedAt DateTime?
-    claimedAt  DateTime?
+    location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+    claimedAt DateTime?
 
     viewedAt DateTime?
 
@@ -925,5 +923,23 @@ model GeoCache {
     key       String   @id
     value     String   @db.Text
     createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+
+    @@index([submissionId])
+}
+
+model BountyWinner {
+    id       Int    @id @default(autoincrement())
+    bountyId Int
+    bounty   Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+    userId   String
+    user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    prizeAmount Float
+    txHash      String?
+    claimedAt   DateTime?
+    selectedAt  DateTime  @default(now())
+
+    @@unique([bountyId, userId])
+    @@index([bountyId])
+    @@index([userId])
 }
