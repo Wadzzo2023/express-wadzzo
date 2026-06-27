@@ -271,7 +271,7 @@ async function callOpenAI(pin: {
     try {
         const geoRes = await fetch(
             `https://nominatim.openstreetmap.org/reverse?lat=${pin.latitude}&lon=${pin.longitude}&format=json&addressdetails=1&zoom=16`,
-            { headers: { "User-Agent": "WadzzoApp/1.0" } }
+            { headers: { "User-Agent": "ActionAPP/1.0" } }
         );
         const geoData = await geoRes.json() as {
             address?: { amenity?: string; leisure?: string; tourism?: string; neighbourhood?: string; suburb?: string }
