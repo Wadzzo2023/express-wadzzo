@@ -706,6 +706,10 @@ model LocationConsumer {
     locationId String
     location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
+    redeemCode String    @unique
+    isRedeemed Boolean   @default(false)
+    redeemedAt DateTime?
+
     claimedAt DateTime?
 
     viewedAt DateTime?
