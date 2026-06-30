@@ -253,15 +253,15 @@ model Creator {
     createdAt          DateTime            @default(now())
     Appearance         Appearance[]
 
-    SellPageAsset        SellPageAsset[]
-    temporalFollows      TemporalFollow[]
-    hotspots             Hotspot[]
-    locationTags         LocationTag[]
-    locationGroupJobs    LocationGroupJob[]
-    agentJobs            AgentJob[]
-    creatorGalleries     CreatorGallery[]
-    gallerySlotOverrides GallerySlotOverride[]
-    postGroups           PostGroup[]
+    SellPageAsset     SellPageAsset[]
+    temporalFollows   TemporalFollow[]
+    hotspots          Hotspot[]
+    locationTags      LocationTag[]
+    locationGroupJobs LocationGroupJob[]
+    agentJobs         AgentJob[]
+    gallery           CreatorGallery?
+    gallerySlots      GallerySlotOverride[]
+    postGroups        PostGroup[]
 
     @@index([bio, name])
 }
