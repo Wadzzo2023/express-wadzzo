@@ -102,6 +102,7 @@ model Subscription {
     posts         Post[]
     assets        Asset[]
     LocationGroup LocationGroup[]
+    postGroups    PostGroup[]
 
     @@unique([name, creatorId])
 }
@@ -114,7 +115,9 @@ model Like {
     user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
     createdAt DateTime @default(now())
 
-    status Boolean @default(true)
+    status      Boolean    @default(true)
+    postGroup   PostGroup? @relation(fields: [postGroupId], references: [id])
+    postGroupId Int?
 
     @@unique([postId, userId])
 }
@@ -134,7 +137,9 @@ model Comment {
     createdAt DateTime @default(now()) // Timestamp when the comment was created
 
     // Optional field: allows for a comment to have child comments (replies)
-    childComments Comment[] @relation("ChildComments") // Collection of child comments (replies)
+    childComments Comment[]  @relation("ChildComments") // Collection of child comments (replies)
+    postGroup     PostGroup? @relation(fields: [postGroupId], references: [id])
+    postGroupId   Int?
 }
 
 model User_Asset {
@@ -179,16 +184,16 @@ model TemporalFollow {
 }
 
 model Media {
-    id        Int       @id @default(autoincrement())
-    url       String
-    type      MediaType
-    title     String?
-    artist    String?
-    album     String?
-    thumbnail String?
-    duration  Int?
-    postId    Int
-    post      Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+    id          Int        @id @default(autoincrement())
+    url         String
+    type        MediaType
+    title       String?
+    artist      String?
+    album       String?
+    thumbnail   String?
+    duration    Int?
+    postGroupId Int?
+    postGroup   PostGroup? @relation(fields: [postGroupId], references: [id])
 }
 
 model CreatorPageAsset {
@@ -256,6 +261,7 @@ model Creator {
     agentJobs            AgentJob[]
     creatorGalleries     CreatorGallery[]
     gallerySlotOverrides GallerySlotOverride[]
+    postGroups           PostGroup[]
 
     @@index([bio, name])
 }
@@ -305,25 +311,57 @@ model VanitySubscription {
     lastPaymentDate   DateTime
 }
 
-model Post {
-    id Int @id @default(autoincrement())
-
-    content String
-    heading String @default("Heading")
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    creator   Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-    creatorId String
-
+model PostGroup {
+    id             Int           @id @default(autoincrement())
+    content        String
+    heading        String        @default("Heading")
+    description    String?
+    creatorId      String
+    creator        Creator       @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    subscriptionId Int?
     subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+
+    createdAt   DateTime         @default(now())
+    updatedAt   DateTime         @updatedAt
+    posts       Post[]
+    collections PostCollection[]
+    likes       Like[]
+    comments    Comment[]
+    medias      Media[]
+}
+
+model Post {
+    id             Int             @id @default(autoincrement())
+    isCollected    Boolean         @default(false)
+    createdAt      DateTime        @default(now())
+    updatedAt      DateTime        @updatedAt
+    postGroupId    Int
+    postGroup      PostGroup       @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
+    collection     PostCollection?
+    subscription   Subscription?   @relation(fields: [subscriptionId], references: [id])
     subscriptionId Int?
     likes          Like[]
     comments       Comment[]
-    medias         Media[]
+    creator        Creator?        @relation(fields: [creatorId], references: [id])
+    creatorId      String?
 
-    @@index([heading])
+    @@index([postGroupId])
+    @@index([isCollected])
+}
+
+model PostCollection {
+    id          Int       @id @default(autoincrement())
+    postId      Int       @unique
+    post        Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+    userId      String
+    user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    postGroupId Int
+    postGroup   PostGroup @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
+    collectedAt DateTime  @default(now())
+
+    @@unique([postGroupId, userId])
+    @@index([userId])
+    @@index([postGroupId])
 }
 
 // Necessary for Next auth
@@ -395,6 +433,7 @@ model User {
     BountySubmission                 BountySubmission[]
     BountyWinner                     BountyWinner[]
     gallerySlotLikes                 GallerySlotLike[]
+    postCollections                  PostCollection[]
 }
 
 model VerificationToken {
