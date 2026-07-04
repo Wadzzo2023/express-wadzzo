@@ -1,11 +1,9 @@
-// src/index.ts
 import "dotenv/config";
 import express, { type Express, type RequestHandler } from "express";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
-import { WebSocketServer } from "ws";
 
 import { logger } from "./lib/logger.js";
 import { authenticate } from "./middleware/auth.js";
@@ -14,7 +12,6 @@ import { hotspotScheduler } from "./lib/hotspot-scheduler.js";
 import jobsRouter from "./routes/jobs.js";
 import healthRouter from "./routes/health.js";
 import hotspotsRouter from "./routes/hotspots.js";
-import musicRouter, { handleMusicWebSocket } from "./routes/music.js";
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? "4000", 10);
@@ -61,8 +58,6 @@ app.use("/hotspots", limiter);
 app.use("/health", healthRouter);
 app.use("/jobs", jobsRouter);
 app.use("/hotspots", hotspotsRouter); // internal-only — no auth, creatorId comes from request body
-app.use("/music", limiter);
-app.use("/music", musicRouter);
 
 // 404
 app.use((_req, res) => {
@@ -120,7 +115,6 @@ const server = app.listen(PORT, () => {
     logger.info(`  Jobs API:   http://localhost:${PORT}/jobs`);
     logger.info(`  SSE:        http://localhost:${PORT}/jobs/:id/stream`);
     logger.info(`  Hotspots:   http://localhost:${PORT}/hotspots`);
-    logger.info(`  Music WS:   ws://localhost:${PORT}/music/stream`);
 
     if (!process.env.NEXTAUTH_SECRET) {
         logger.warn("  NEXTAUTH_SECRET not set — authentication is disabled");
@@ -133,18 +127,5 @@ const server = app.listen(PORT, () => {
     });
 });
 
-// ── WebSocket for music streaming ────────────────────────────────────────────
-const wss = new WebSocketServer({ noServer: true });
-
-server.on("upgrade", (request, socket, head) => {
-    const url = new URL(request.url ?? "", `http://${request.headers.host}`);
-    if (url.pathname === "/music/stream") {
-        wss.handleUpgrade(request, socket, head, (ws) => {
-            handleMusicWebSocket(ws);
-        });
-    } else {
-        socket.destroy();
-    }
-});
 
 export default app;

@@ -21,7 +21,8 @@ export async function runAgentJob(job: Job): Promise<unknown> {
     const result = await runAgentPipeline(payload);
 
     setProgress(job.id, 100);
-    addLog(job.id, { msg: `Pipeline done — stage=${result.stage} mode=${result.mode ?? "pin_drop"}`, level: "info", });
+    const r = result as Record<string, unknown>;
+    addLog(job.id, { msg: `Pipeline done — stage=${r.stage} mode=${r.mode ?? "pin_drop"}`, level: "info", });
 
     return result;
 }

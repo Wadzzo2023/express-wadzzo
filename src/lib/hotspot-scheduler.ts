@@ -25,7 +25,7 @@ interface ScheduledHotspot {
     hotspotId: string;
     creatorId: string;
     dropEveryDays: number;
-    task: cron.ScheduledTask;
+    task: ReturnType<typeof cron.schedule>;
     anchorDate: Date;
 }
 
@@ -123,7 +123,7 @@ class HotspotScheduler {
         const entry = this.schedules.get(hotspotId);
         if (!entry) return null;
         const expression = buildCronExpression(entry.dropEveryDays, entry.anchorDate);
-        return cronParser.parseExpression(expression).next().toDate();
+        return cronParser.parse(expression).next().toDate();
     }
 
     /** Count of currently tracked schedules (for health endpoint). */

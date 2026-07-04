@@ -1,18 +1,3 @@
-// ~/lib/agent/pin-drop-agent.ts
-//
-// Extracted and renamed from /api/agent/run route.ts.
-// Was: runAgent()
-// Now: runPinDropAgent()
-//
-// Handles the full external search pipeline:
-//   classify_query → backbone_fetch / places_search /
-//   subcategory_fanout / event_search / brand_country_search
-//   → smart_geocode → storePins → confirm → create job
-//
-// Called by /api/agent/run when resolveRoute() returns "pin_drop".
-// Nothing inside this file has changed from the original runAgent()
-// except the function name and the import paths being explicit.
-
 import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
@@ -227,7 +212,7 @@ AREA RESET RULE:
 // to the system prompt so the agent knows what to search for.
 
 function buildIntentContext(intent: PinIntent): string {
-    const today = new Date().toISOString().split("T")[0]!;
+    const today = new Date().toISOString().split("T")[0];
     const totalCount = intent.count ?? 1;
     const countSpecified = intent.countSpecified ?? false;
     const pinNumber = intent.pinNumber ?? 1;

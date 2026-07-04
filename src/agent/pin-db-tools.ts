@@ -1,10 +1,3 @@
-// ~/lib/agent/pin-db-tools.ts
-// DB tools for the management agent.
-// All tools are scoped to creatorId — nothing crosses creator boundaries.
-//
-// Hotspot write tools (pause/resume/delete) call the Express /hotspots API
-// instead of QStash — the scheduler lives on the same Express server.
-
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { db } from "../lib/db";
@@ -1532,7 +1525,7 @@ export const createDbTools = (creatorId: string) => {
                 maxTokens: 2000,
             }).bindTools([{ type: "web_search_preview" } as never]);
 
-            const today = new Date().toISOString().split("T")[0]!;
+            const today = new Date().toISOString().split("T")[0];
 
             const response = await llm.invoke([
                 {
@@ -1555,12 +1548,12 @@ export const createDbTools = (creatorId: string) => {
                 },
             ]);
 
-            const textContent = Array.isArray(response.content)
+            const textContent = typeof response.content === "string"
                 ? response.content
-                    .filter((b: { type?: string }) => b.type === "text")
-                    .map((b: { text?: string }) => b.text ?? "")
-                    .join("")
-                : String(response.content ?? "");
+                : response.content
+                    .filter((b) => typeof b !== "string" && b.type === "text")
+                    .map((b) => (typeof b !== "string" && "text" in b ? b.text : ""))
+                    .join("");
 
             try {
                 const clean = textContent
