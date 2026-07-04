@@ -2,7 +2,6 @@
     "name": "express-server",
     "version": "1.0.0",
     "description": "Fully self-contained async task server — agent pipeline + pin creation",
-    "type": "module",
     "main": "dist/index.js",
     "scripts": {
         "dev": "tsx watch src/index.ts",
@@ -48,5 +47,6 @@
         "prisma": "^5.14.0",
         "tsx": "^4.15.7",
         "typescript": "^5.5.2"
-    }
+    },
+    "packageManager": "pnpm@9.15.4"
 }

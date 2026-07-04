@@ -485,7 +485,8 @@ export interface ConfirmResponse {
     count: number | null;
     affected: string | null;
     unaffected: string | null;
-    // hotspot edit scope selector
+    what?: string | null;
+    where?: string | null;
     hotspotEditScope?: HotspotEditScope;
   };
 }

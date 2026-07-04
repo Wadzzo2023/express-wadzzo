@@ -1557,8 +1557,8 @@ export const createDbTools = (creatorId: string) => {
 
             const textContent = Array.isArray(response.content)
                 ? response.content
-                    .filter((b: { type?: string }) => b.type === "text")
-                    .map((b: { text?: string }) => b.text ?? "")
+                    .filter((b): b is { type: "text"; text: string } => (b as { type?: string }).type === "text")
+                    .map((b) => b.text)
                     .join("")
                 : String(response.content ?? "");
 

@@ -13,8 +13,8 @@
  *  - Restore: on boot, reload all isActive=true hotspots from DB
  */
 
-import cron from "node-cron";
-import cronParser from "cron-parser";
+import cron, { type ScheduledTask } from "node-cron";
+import { CronExpressionParser } from "cron-parser";
 import { db } from "./db.js";
 import { logger } from "./logger.js";
 import { dropPinsForHotspot } from "./hotspot-drop";
@@ -25,7 +25,7 @@ interface ScheduledHotspot {
     hotspotId: string;
     creatorId: string;
     dropEveryDays: number;
-    task: cron.ScheduledTask;
+    task: ScheduledTask;
     anchorDate: Date;
 }
 
@@ -123,7 +123,7 @@ class HotspotScheduler {
         const entry = this.schedules.get(hotspotId);
         if (!entry) return null;
         const expression = buildCronExpression(entry.dropEveryDays, entry.anchorDate);
-        return cronParser.parseExpression(expression).next().toDate();
+        return CronExpressionParser.parse(expression).next().toDate();
     }
 
     /** Count of currently tracked schedules (for health endpoint). */
