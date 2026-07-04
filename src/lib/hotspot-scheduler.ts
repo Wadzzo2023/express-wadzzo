@@ -13,7 +13,7 @@
  *  - Restore: on boot, reload all isActive=true hotspots from DB
  */
 
-import cron from "node-cron";
+import cron, { type ScheduledTask } from "node-cron";
 import cronParser from "cron-parser";
 import { db } from "./db.js";
 import { logger } from "./logger.js";
@@ -25,7 +25,7 @@ interface ScheduledHotspot {
     hotspotId: string;
     creatorId: string;
     dropEveryDays: number;
-    task: cron.ScheduledTask;
+    task: ScheduledTask;
     anchorDate: Date;
 }
 

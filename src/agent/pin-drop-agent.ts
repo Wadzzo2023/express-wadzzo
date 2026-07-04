@@ -338,9 +338,10 @@ function mergeIntent(
     };
 
     if (response.type === "confirm") {
-        base.query = response.summary?.what ?? base.query;
-        base.area = response.summary?.where ?? base.area;
-        base.count = response.summary?.count ?? base.count;
+        const summary = response.summary as { what?: string; where?: string; count?: number } | undefined;
+        base.query = summary?.what ?? base.query;
+        base.area = summary?.where ?? base.area;
+        base.count = summary?.count ?? base.count;
     }
     if (response.type === "results") {
         const pinCount =

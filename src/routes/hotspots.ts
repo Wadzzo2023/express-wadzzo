@@ -7,7 +7,7 @@ import {
     type IRouter,
 } from "express";
 import { z } from "zod";
-import { ItemPrivacy } from "@prisma/client";
+import { ItemPrivacy, Prisma, PinType } from "@prisma/client";
 import { db } from "../lib/db";
 import { hotspotScheduler } from "../lib/hotspot-scheduler";
 import { dropPinsForHotspot } from "../lib/hotspot-drop";
@@ -101,7 +101,7 @@ router.post(
                 hotspotStartDate,
                 hotspotEndDate,
                 shape: input.hotspotShape,
-                geoJson: input.geoJson ?? null,
+                geoJson: input.geoJson ?? Prisma.JsonNull,
                 isActive: true,
                 locationGroups: {
                     create: {
@@ -110,7 +110,7 @@ router.post(
                         description: input.description,
                         image: input.image,
                         link: input.url,
-                        type: input.type ?? "OTHER",
+                        type: (input.type ?? "OTHER") as PinType,
                         privacy,
                         multiPin: input.multiPin ?? false,
                         assetId,
