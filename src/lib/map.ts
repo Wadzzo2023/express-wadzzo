@@ -3,7 +3,6 @@ interface Location {
     latitude: number;
     longitude: number;
 }
-const EARTH_RADIUS_M = 6_371_000
 const EarthRadius = 6371; // Earth's radius in kilometers
 const OneDegree = ((EarthRadius * 2 * Math.PI) / 360) * 1000; // One degree in meters
 

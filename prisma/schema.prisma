@@ -77,14 +77,17 @@ model Notification {
 }
 
 model NotificationObject {
-    id           Int              @id @default(autoincrement())
-    entityType   NotificationType
-    entityId     Int
-    createdAt    DateTime         @default(now())
-    Notification Notification[]
-    actorId      String
-    actor        User             @relation(fields: [actorId], references: [id], onDelete: Cascade)
-    isUser       Boolean          @default(true)
+    id             Int              @id @default(autoincrement())
+    entityType     NotificationType
+    // Int id for entities with numeric PKs (Post, Comment, Follow, CommunityMember, ...).
+    entityId       Int?
+    // String id for entities with non-numeric PKs (Bounty uses a UUID).
+    entityStringId String?
+    createdAt      DateTime         @default(now())
+    Notification   Notification[]
+    actorId        String
+    actor          User             @relation(fields: [actorId], references: [id], onDelete: Cascade)
+    isUser         Boolean          @default(true)
 }
 
 // ------------------------FAN SCHEMA-------------------------
@@ -99,47 +102,40 @@ model Subscription {
     price         Float // here price is the copy of creator page asset
     creatorId     String
     creator       Creator         @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-    posts         Post[]
     assets        Asset[]
     LocationGroup LocationGroup[]
-    postGroups    PostGroup[]
+    postGroup     PostGroup[]
 
     @@unique([name, creatorId])
 }
 
 model Like {
-    id        Int      @id @default(autoincrement())
-    postId    Int
-    post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-    userId    String
-    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-    createdAt DateTime @default(now())
+    id          Int       @id @default(autoincrement())
+    userId      String
+    user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    createdAt   DateTime  @default(now())
+    postGroupId Int
+    postGroup   PostGroup @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
+    status      Boolean   @default(true)
 
-    status      Boolean    @default(true)
-    postGroup   PostGroup? @relation(fields: [postGroupId], references: [id])
-    postGroupId Int?
-
-    @@unique([postId, userId])
+    @@unique([postGroupId, userId])
 }
 
 model Comment {
-    id              Int    @id @default(autoincrement())
+    id              Int       @id @default(autoincrement())
     parentCommentID Int? // Optional field to reference parent comment (for nested comments)
-    postId          Int // Foreign key referencing Post model
-    post            Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
     userId          String // Foreign key referencing User model
-    user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+    user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
     content         String // Content of the comment
-
+    postGroupId     Int
+    postGroup       PostGroup @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
     // Optional relationship: a comment can have a parent comment
-    parentComment Comment? @relation("ChildComments", fields: [parentCommentID], references: [id], onDelete: Cascade)
+    parentComment   Comment?  @relation("ChildComments", fields: [parentCommentID], references: [id], onDelete: Cascade)
 
     createdAt DateTime @default(now()) // Timestamp when the comment was created
 
     // Optional field: allows for a comment to have child comments (replies)
-    childComments Comment[]  @relation("ChildComments") // Collection of child comments (replies)
-    postGroup     PostGroup? @relation(fields: [postGroupId], references: [id])
-    postGroupId   Int?
+    childComments Comment[] @relation("ChildComments") // Collection of child comments (replies)
 }
 
 model User_Asset {
@@ -240,7 +236,6 @@ model Creator {
     instagram                 String?
 
     user               User                @relation(fields: [id], references: [id], onDelete: Cascade)
-    posts              Post[]
     subscriptions      Subscription[]
     assets             Asset[]
     marketAssets       MarketAsset[]
@@ -261,6 +256,7 @@ model Creator {
     agentJobs         AgentJob[]
     gallery           CreatorGallery?
     gallerySlots      GallerySlotOverride[]
+    museumRooms       MuseumRoom[]
     postGroups        PostGroup[]
 
     @@index([bio, name])
@@ -331,19 +327,13 @@ model PostGroup {
 }
 
 model Post {
-    id             Int             @id @default(autoincrement())
-    isCollected    Boolean         @default(false)
-    createdAt      DateTime        @default(now())
-    updatedAt      DateTime        @updatedAt
-    postGroupId    Int
-    postGroup      PostGroup       @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
-    collection     PostCollection?
-    subscription   Subscription?   @relation(fields: [subscriptionId], references: [id])
-    subscriptionId Int?
-    likes          Like[]
-    comments       Comment[]
-    creator        Creator?        @relation(fields: [creatorId], references: [id])
-    creatorId      String?
+    id          Int             @id @default(autoincrement())
+    isCollected Boolean         @default(false)
+    createdAt   DateTime        @default(now())
+    updatedAt   DateTime        @updatedAt
+    postGroupId Int
+    postGroup   PostGroup       @relation(fields: [postGroupId], references: [id], onDelete: Cascade)
+    collection  PostCollection?
 
     @@index([postGroupId])
     @@index([isCollected])
@@ -873,6 +863,17 @@ model AppConfig {
     nearbyPinRadius Float
 }
 
+// Singleton-style config (one row) for broadcasting bounties to Telegram.
+// The bot token is sensitive — never expose the full token to the client.
+model TelegramConfig {
+    id        Int      @id @default(autoincrement())
+    botToken  String // Telegram bot token from @BotFather
+    chatId    String // Channel/group chat id (e.g. -100xxxxxxxxxx)
+    enabled   Boolean  @default(false)
+    updatedAt DateTime @updatedAt
+    updatedBy String? // admin user id who last changed it
+}
+
 model SellPageAsset {
     id           Int      @id @default(autoincrement())
     title        String
@@ -1144,7 +1145,7 @@ enum BountySubmissionStatus {
 }
 
 model Bounty {
-    id          Int          @id @default(autoincrement())
+    id          String       @id @default(uuid())
     title       String
     summary     String
     description String
@@ -1162,6 +1163,22 @@ model Bounty {
     prizeAssetCode   String
     prizeAssetIssuer String?
 
+    // Soroban bounty_escrow contract this bounty's prize is held in — every
+    // bounty is on-chain escrow now (see src/lib/stellar/bounty/escrow.ts).
+    // Stamped in at creation time so a future contract redeploy/upgrade never
+    // breaks an already-funded bounty's selection/claim flow.
+    escrowContractId String
+
+    // True when the on-chain "creator" address (the one that funded the
+    // escrow and authorizes select_winner/cancel_bounty) is the Creator's
+    // custodial storage account (Creator.storagePub/storageSecret) rather
+    // than the bounty owner's own wallet/session identity.
+    fundedFromCreatorStorage Boolean @default(false)
+
+    // When true, participants must submit proof via Action Cam (live capture,
+    // server-stamped + cryptographically sealed). Owner can toggle off at any time.
+    requiresActionCam Boolean @default(false)
+
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
@@ -1176,7 +1193,7 @@ model Bounty {
 
 model BountyParticipant {
     id       Int    @id @default(autoincrement())
-    bountyId Int
+    bountyId String
     bounty   Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
     userId   String
     user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1190,7 +1207,7 @@ model BountyParticipant {
 
 model BountySubmission {
     id       Int    @id @default(autoincrement())
-    bountyId Int
+    bountyId String
     bounty   Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
     userId   String
     user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1201,7 +1218,8 @@ model BountySubmission {
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
-    media BountySubmissionMedia[]
+    captures BountySubmissionCapture[]
+    media    BountySubmissionMedia[]
 
     @@index([bountyId])
     @@index([userId])
@@ -1221,9 +1239,47 @@ model BountySubmissionMedia {
     @@index([submissionId])
 }
 
+// One submission can contain many captures (photos + videos mixed, or just
+// one). Each capture row is one file. Used for both Action Cam (signed) and
+// plain (unsigned) flows — the difference is which fields are populated.
+model BountySubmissionCapture {
+    id           Int              @id @default(autoincrement())
+    submissionId Int
+    submission   BountySubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+    // Type of media.
+    captureType String // "PHOTO" | "VIDEO"
+
+    // ── Integrity hashes ────────────────────────────────────────────
+    captureOriginalHash String // sha256 of the raw bytes (client-computed)
+    captureSealedHash   String // sha256 of the bytes now in S3
+
+    // ── Action Cam metadata (null for plain uploads) ────────────────
+    captureLat        Float?
+    captureLon        Float?
+    captureCapturedAt DateTime? // server-stamped at seal time
+    captureWallet     String?
+    captureSignature  String? // HMAC-SHA256 hex, present for Action Cam
+    captureSealedAt   DateTime?
+
+    // ── Storage URLs (always full public S3 URLs) ─────────────────
+    captureStorageUrl String // URL of the ORIGINAL media in S3
+    capturePreviewUrl String? // URL of the stamped preview (Action Cam only);
+    // null for plain uploads
+
+    // ── Per-capture status (independent review) ───────────────────
+    status BountySubmissionStatus @default(PENDING)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([submissionId])
+    @@index([status])
+}
+
 model BountyWinner {
     id       Int    @id @default(autoincrement())
-    bountyId Int
+    bountyId String
     bounty   Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
     userId   String
     user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1258,12 +1314,13 @@ model GallerySlotOverride {
     photoDescription   String?
     photoDescPlacement String?
     gridCell           Int?
+    roomIndex          Int      @default(0)
     creatorId          String
     creator            Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
     updatedAt          DateTime @updatedAt
     createdAt          DateTime @default(now())
 
-    @@unique([slotId, creatorId])
+    @@unique([slotId, creatorId, roomIndex])
     @@index([creatorId])
 }
 
@@ -1271,10 +1328,26 @@ model GallerySlotLike {
     id        Int      @id @default(autoincrement())
     slotId    String
     creatorId String
+    roomIndex Int      @default(0)
     userId    String
     user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
     createdAt DateTime @default(now())
 
-    @@unique([slotId, creatorId, userId])
-    @@index([slotId, creatorId])
+    @@unique([slotId, creatorId, roomIndex, userId])
+    @@index([slotId, creatorId, roomIndex])
+}
+
+model MuseumRoom {
+    id            Int     @id @default(autoincrement())
+    creatorId     String
+    creator       Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    roomIndex     Int
+    label         String?
+    northDoorCell Int?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([creatorId, roomIndex])
+    @@index([creatorId])
 }
