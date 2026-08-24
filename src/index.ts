@@ -11,6 +11,7 @@ import { logger } from "./lib/logger.js";
 import { authenticate } from "./middleware/auth.js";
 import { pruneOldJobs } from "./lib/job-store.js";
 import { hotspotScheduler } from "./lib/hotspot-scheduler.js";
+import { startKeepAliveScheduler } from "./lib/keep-alive-scheduler.js";
 import jobsRouter from "./routes/jobs.js";
 import healthRouter from "./routes/health.js";
 import hotspotsRouter from "./routes/hotspots.js";
@@ -132,6 +133,9 @@ const server = app.listen(PORT, () => {
     hotspotScheduler.restoreAll().catch((err: unknown) => {
         logger.error("[startup] Failed to restore hotspot schedules:", err);
     });
+
+    // ── nft_oz TTL keep-alive ────────────────────────────────────────────────
+    startKeepAliveScheduler();
 });
 
 // ── WebSocket for music streaming ────────────────────────────────────────────
