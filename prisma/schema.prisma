@@ -422,8 +422,19 @@ model User {
     BountyParticipant                BountyParticipant[]
     BountySubmission                 BountySubmission[]
     BountyWinner                     BountyWinner[]
+    lastFmAccount                    LastFMAccount?
     gallerySlotLikes                 GallerySlotLike[]
     postCollections                  PostCollection[]
+    createdNfts                      Nft[]
+    nftTokens                        NftToken[]
+    nftListings                      NftListing[]
+    nftPurchases                     NftPurchase[]
+    nftLikes                         NftLike[]
+    collectionLikes                  CollectionLike[]
+    nftCollections                   Collection[]
+    // Personal, invisible-to-everyone-else AR pin sets from a gated NFT's
+    // unlock rule — see `LocationGroup.restrictedToUserId`.
+    restrictedPinGroups              LocationGroup[]                   @relation("RestrictedPinGroups")
 }
 
 model VerificationToken {
@@ -491,6 +502,11 @@ enum ItemPrivacy {
 
 // ------------------------Marketplace SCHEMA-------------------------
 
+enum AssetKind {
+    STELLAR_CLASSIC
+    NON_STELLAR
+}
+
 model Asset {
     id          Int     @id @default(autoincrement())
     name        String
@@ -498,6 +514,7 @@ model Asset {
 
     limit Int? // if null then it is unlimited
 
+    kind          AssetKind @default(STELLAR_CLASSIC)
     code          String
     issuer        String
     issuerPrivate String?
@@ -710,6 +727,36 @@ model LocationGroup {
     hotspot           Hotspot?           @relation(fields: [hotspotId], references: [id])
     hotspotId         String?
     locationGroupTags LocationGroupTag[]
+
+    // ── Gated-NFT unlock pin set (see NftLockedMedia.unlockRule) ────────────
+    // When set, this group is a private, single-token clone of one specific
+    // locked-content item's unlock rule — invisible to every user except
+    // `restrictedToUser` (enforced in gameRouter.getPins /
+    // pages/api/game/locations and consumePin), not a shared/public
+    // campaign. Null for every ordinary LocationGroup that exists today;
+    // nothing above this line changes behavior for those.
+    restrictedToUserId     String?
+    restrictedToUser       User?           @relation("RestrictedPinGroups", fields: [restrictedToUserId], references: [id])
+    // One private pin set per (minted token, gated locked-content item)
+    // pair — not per edition, not per buyer, not even per token, since a
+    // single token can carry several independently-gated reward items,
+    // each with its own pin set that unlocks on its own.
+    unlockForTokenId       String?
+    unlockForToken         NftToken?       @relation(fields: [unlockForTokenId], references: [id], onDelete: Cascade)
+    unlockForLockedMediaId String?
+    unlockForLockedMedia   NftLockedMedia? @relation(fields: [unlockForLockedMediaId], references: [id], onDelete: Cascade)
+    // Denormalized for convenience queries ("how many pin sets exist for
+    // this edition") without joining through NftToken; not itself a lookup
+    // key.
+    unlockForNftId         String?
+    unlockForNft           Nft?            @relation(fields: [unlockForNftId], references: [id], onDelete: Cascade)
+    // Set once this item's collected pins meet its rule's requirement and
+    // the one-time call to the contract's `unlock_item_for` succeeds. Null
+    // until then; lets a retry/cron avoid double-submitting.
+    onChainUnlockedAt      DateTime?
+    onChainUnlockTxHash    String?
+
+    @@unique([unlockForTokenId, unlockForLockedMediaId])
 }
 
 model Location {
@@ -861,6 +908,11 @@ model QuarterReward {
 model AppConfig {
     id              Int   @id @default(autoincrement())
     nearbyPinRadius Float
+
+    // Default platform cut, and the treasury proposed when updating the
+    // shared 1-of-1 collection.
+    platformFeeBps       Int     @default(250)
+    platformFeeRecipient String?
 }
 
 // Singleton-style config (one row) for broadcasting bounties to Telegram.
@@ -1179,6 +1231,10 @@ model Bounty {
     // server-stamped + cryptographically sealed). Owner can toggle off at any time.
     requiresActionCam Boolean @default(false)
 
+    // 🎵 Music & Last.fm Integration
+    enableMusic Boolean            @default(false)
+    musicConfig BountyMusicConfig?
+
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
@@ -1200,9 +1256,96 @@ model BountyParticipant {
 
     joinedAt DateTime @default(now())
 
+    trackProgress BountyParticipantTrackProgress[]
+
     @@unique([bountyId, userId])
     @@index([bountyId])
     @@index([userId])
+}
+
+// ------------------------- Last.fm & Music Models ----------------------------
+
+model LastFMAccount {
+    id         String  @id @default(cuid())
+    username   String
+    realName   String?
+    country    String?
+    sessionKey String? @unique
+    profileUrl String
+    image      String?
+    playCount  Int     @default(0)
+
+    userId String @unique
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    isConnected Boolean  @default(true)
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    @@index([username])
+}
+
+enum BountyMusicMode {
+    MUSIC_ONLY
+    HYBRID
+}
+
+enum BountyRuleType {
+    ALL
+    ANY_N
+    TOTAL_PLAYS
+}
+
+model BountyMusicConfig {
+    id       String @id @default(uuid())
+    bountyId String @unique
+    bounty   Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+
+    musicMode            BountyMusicMode @default(HYBRID)
+    ruleType             BountyRuleType  @default(ANY_N)
+    customRequiredTracks Int?
+    customTotalPlays     Int?
+
+    tracks BountyTrack[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model BountyTrack {
+    id            String            @id @default(uuid())
+    musicConfigId String
+    musicConfig   BountyMusicConfig @relation(fields: [musicConfigId], references: [id], onDelete: Cascade)
+
+    title           String
+    artist          String
+    album           String?
+    albumArtUrl     String?
+    durationSec     Int     @default(180)
+    targetPlayCount Int     @default(1)
+
+    lastFmUrl  String
+    spotifyUrl String?
+    youtubeUrl String?
+
+    createdAt DateTime @default(now())
+
+    @@index([musicConfigId])
+}
+
+model BountyParticipantTrackProgress {
+    id            String            @id @default(uuid())
+    participantId Int
+    participant   BountyParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+    trackId          String
+    currentPlayCount Int     @default(0)
+    targetPlayCount  Int     @default(1)
+    isSatisfied      Boolean @default(false)
+
+    updatedAt DateTime @updatedAt
+
+    @@unique([participantId, trackId])
 }
 
 model BountySubmission {
@@ -1350,4 +1493,337 @@ model MuseumRoom {
 
     @@unique([creatorId, roomIndex])
     @@index([creatorId])
+}
+
+// ------------------------NFT MARKETPLACE SCHEMA-------------------------
+// SEP-50 compliant NFT marketplace
+
+enum NftStatus {
+    // Registered as an edition entry in the database only — no on-chain
+    // presence yet. The row is still fully listed and buyable: `buy_edition`
+    // registers the edition on-chain (from this row's own data) the moment
+    // the *first* copy sells, so there is no "waiting on the creator" phase
+    // to gate visibility on.
+    PENDING
+    // At least one copy has been minted on-chain (`onChainEditionId` is set).
+    MINTED
+}
+
+// One creator submission ("edition"): bounded artwork with a fixed `supply`,
+// minted lazily on-chain as copies sell rather than up front — see
+// `buy_edition` in `contracts/nft_oz`. A `supply` of 1 is the classic 1-of-1
+// case; nothing else about the model changes for it.
+model Nft {
+    id               String        @id @default(uuid())
+    name             String
+    description      String
+    thumbnail        String
+    contentUrl       String
+    mediaType        String
+    creatorId        String
+    creator          User          @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    collectionId     String?
+    collection       Collection?   @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+    // The shared collection contract the edition lives in. Recorded per row
+    // so an environment/contract change never silently repoints old rows.
+    // Null until the edition's first purchase registers it on-chain.
+    contractAddress  String?
+    onChainEditionId String?
+    royaltyBps       Int           @default(0)
+    // Total copies this edition will ever mint (>= 1, default 1).
+    supply           Int           @default(1)
+    // Cached from the contract's `EditionMeta.minted`, refreshed on every
+    // confirmed purchase — a display cache, not a source of truth. The
+    // contract's own `minted`/`supply` (read via `edition_meta`) is what
+    // `buy_edition` actually enforces.
+    mintedCount      Int           @default(0)
+    txHash           String?
+    status           NftStatus     @default(PENDING)
+    tokens           NftToken[]
+    prices           NftPrice[]
+    purchases        NftPurchase[]
+    likes            NftLike[]
+    createdAt        DateTime      @default(now())
+    updatedAt        DateTime      @updatedAt
+
+    // Denormalized from `NftListing` (recomputed on every listing change) so
+    // browse/sort/card views don't need a live aggregate query per NFT —
+    // same cached-counter pattern as e.g. Post.viewCount. Covers *resale*
+    // listings only; the primary "buy a new copy" price comes from `prices`.
+    lowestActivePrice  Float?
+    activeListingCount Int          @default(0)
+    NftListing         NftListing[]
+
+    // ── Optional "VIP ticket" gating: locked reward content, each item
+    // optionally gated by its own unlock rule (see NftLockedMedia.unlockRule)
+    // — an item with no rule reveals the moment a copy is bought, an item
+    // with one reveals once that copy completes it. Empty `lockedMedia`
+    // means an ordinary, ungated edition. ──────────────────────────────────
+    lockedMedia     NftLockedMedia[]
+    unlockPinGroups LocationGroup[]
+
+    @@index([creatorId])
+    @@index([collectionId])
+    @@index([status])
+}
+
+// One reward item a creator attaches to a gated edition — a song, image,
+// video, or a plain external link (e.g. a SoundCloud page rather than a
+// file we host). Several can be attached, each optionally gated by its
+// own `unlockRule`: an item with no rule reveals the moment a copy is
+// bought; an item with one reveals independently once that specific
+// copy's own points are all collected.
+enum NftLockedMediaType {
+    SONG
+    IMAGE
+    VIDEO
+    OTHER
+}
+
+model NftLockedMedia {
+    id         String             @id @default(uuid())
+    nftId      String
+    nft        Nft                @relation(fields: [nftId], references: [id], onDelete: Cascade)
+    url        String
+    type       NftLockedMediaType
+    label      String?
+    // Display order only — purely a UI hint, safe to change later (e.g. if
+    // reordering is ever added). Contrast with `chainIndex` below.
+    sortOrder  Int                @default(0)
+    // This item's permanent identity for the on-chain `Unlocked(token_id,
+    // media_index)` key (see contracts/nft_oz's `unlock_item_for`) —
+    // assigned once at creation from the same index as the initial
+    // `sortOrder`, then **never reassigned**, even if display order changes
+    // later. Existing on-chain unlock records are keyed by this value, so
+    // reusing it for a different item would misattribute those records.
+    chainIndex Int
+    createdAt  DateTime           @default(now())
+
+    unlockRule      NftUnlockLocationRule?
+    unlockPinGroups LocationGroup[]
+
+    @@index([nftId])
+}
+
+// Only one rule kind exists today — visiting N creator-chosen locations.
+// A future rule kind (e.g. "hold X token") gets its own table the same way,
+// selected by a new value here, rather than a generic polymorphic rule
+// engine built ahead of a second kind actually existing. This is currently
+// unused as a discriminator (every `NftUnlockLocationRule` row already
+// implies LOCATION_VISIT by construction) — kept for a future second kind.
+enum NftUnlockRuleType {
+    LOCATION_VISIT
+}
+
+// One locked-content item's unlock rule — set once per item, not once per
+// edition (see NftLockedMedia's doc comment: each item is gated
+// independently, or not at all). Every individually minted copy that owns
+// this item gets its own private clone of these points as a
+// `LocationGroup` (see `LocationGroup.unlockForLockedMediaId`) — this
+// table itself never gets pins collected against it directly.
+model NftUnlockLocationRule {
+    id            String                   @id @default(uuid())
+    lockedMediaId String                   @unique
+    lockedMedia   NftLockedMedia           @relation(fields: [lockedMediaId], references: [id], onDelete: Cascade)
+    radius        Float                    @default(50) // meters — how close counts as "visiting" a point
+    points        NftUnlockLocationPoint[]
+    createdAt     DateTime                 @default(now())
+}
+
+model NftUnlockLocationPoint {
+    id        String                @id @default(uuid())
+    ruleId    String
+    rule      NftUnlockLocationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+    label     String?
+    latitude  Float
+    longitude Float
+    sortOrder Int                   @default(0)
+}
+
+// The price grid a creator sets at creation — one row per accepted currency
+// (XLM, the platform asset, room for more like USDC later), mirroring the
+// contract's per-edition `EditionPrices`. Pre-mint this is the only source
+// of pricing; once `onChainEditionId` is set, `edition_prices` on-chain is
+// the ground truth and this is just the display cache the create form wrote.
+model NftPrice {
+    id           String   @id @default(uuid())
+    nftId        String
+    nft          Nft      @relation(fields: [nftId], references: [id], onDelete: Cascade)
+    // "xlm" | "asset" | "usdc" — the same `PaymentMethodEnum` values used by
+    // the classic-asset purchase flow (see
+    // src/components/payment/payment-process.tsx), so the buy dialog keys
+    // off one enum everywhere instead of raw SAC addresses. Resolved to an
+    // actual contract address only when building the `buy_edition` XDR.
+    paymentToken String
+    price        Float
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @updatedAt
+
+    @@unique([nftId, paymentToken])
+}
+
+// One row per individually minted copy of an edition. This is what makes a
+// specific copy independently resellable once several buyers (or one buyer
+// buying more than once) hold different token ids from the same edition —
+// an existence-only "who has ever held this" index can't support that.
+// `ownerId` is authoritative between confirm* calls, same trust model the
+// rest of this router already uses for `Nft.status`/`NftListing` — not
+// re-verified against chain on every read.
+model NftToken {
+    id              String          @id @default(uuid())
+    nftId           String
+    nft             Nft             @relation(fields: [nftId], references: [id], onDelete: Cascade)
+    // The on-chain token_id.
+    tokenId         String          @unique
+    ownerId         String
+    owner           User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+    listing         NftListing?
+    // This copy's own private AR pin sets — one per gated locked-content
+    // item on the edition, if any — see `LocationGroup.unlockForTokenId`.
+    unlockPinGroups LocationGroup[]
+    createdAt       DateTime        @default(now())
+    updatedAt       DateTime        @updatedAt
+
+    @@index([nftId])
+    @@index([ownerId])
+}
+
+// One row per secondary-market listing of a single already-minted copy —
+// mirrors the contract's per-token `Listing`. Primary sales (buying a new,
+// not-yet-minted copy of an edition) are priced via `NftPrice`, not this
+// model; this is resale only, which is why it's keyed on a specific
+// `NftToken` rather than the edition as a whole — a seller with several
+// copies of the same edition can list each independently.
+model NftListing {
+    id           String            @id @default(uuid())
+    nftId        String
+    nft          Nft               @relation(fields: [nftId], references: [id], onDelete: Cascade)
+    tokenId      String            @unique
+    token        NftToken          @relation(fields: [tokenId], references: [tokenId], onDelete: Cascade)
+    sellerId     String
+    seller       User              @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+    // Denormalized cheapest entry from `prices`, for existing single-price
+    // sorting/aggregate code (`Nft.lowestActivePrice` etc.) — `prices` is the
+    // source of truth for what this listing actually offers.
+    price        Float
+    // SEP-41 token the price is denominated in, mirroring the contract's
+    // per-listing `payment_token`. Null means the native XLM SAC.
+    paymentToken String?
+    isActive     Boolean           @default(true)
+    createdAt    DateTime          @default(now())
+    updatedAt    DateTime          @updatedAt
+    prices       NftListingPrice[]
+
+    @@index([nftId, isActive])
+}
+
+// A reseller's own price grid for one specific listed copy — same shape as
+// `NftPrice` (an edition's primary price grid), but scoped to a single
+// `NftListing` instead of a whole edition, mirroring the contract's
+// per-token `Listing.prices`.
+model NftListingPrice {
+    id           String     @id @default(uuid())
+    listingId    String
+    listing      NftListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+    paymentToken String
+    price        Float
+    createdAt    DateTime   @default(now())
+
+    @@unique([listingId, paymentToken])
+}
+
+enum NftPurchaseStatus {
+    PENDING
+    // Card checkout only (see `buyEditionWithCard`/`deliverCardFundedEditionPurchase`
+    // in `src/server/api/routers/nft.ts`): Square already charged the card,
+    // but funding the buyer's account and/or the fee-bumped `buy_edition`
+    // call hasn't succeeded yet. No automatic retry — a row stuck here needs
+    // manual follow-up (`SELECT * FROM "NftPurchase" WHERE status =
+    // 'STEP1_CONFIRMED'`). A direct ACTION purchase never passes through
+    // this state — the buyer's fee-bumped transaction either mints and pays
+    // atomically or doesn't happen at all.
+    STEP1_CONFIRMED
+    CONFIRMED
+    // The Square charge itself didn't complete (declined, etc.) — nothing was
+    // ever collected, so there's nothing to retry or refund.
+    FAILED
+}
+
+// Tracks one attempted bulk purchase of an edition. This row's id *is* the
+// on-chain `purchase_ref` `buy_edition` is called with — created before the
+// buyer signs anything, mirroring how `Nft.create` pre-creates its row
+// before minting used to happen. Confirming reads back exactly what that
+// purchase minted via the contract's `purchase_by_ref`, which is the only
+// reliable way to learn the assigned token range (see the doc comment on
+// `buy_edition` in `contracts/nft_oz/src/lib.rs` for why).
+model NftPurchase {
+    id           String            @id @default(uuid())
+    nftId        String
+    nft          Nft               @relation(fields: [nftId], references: [id], onDelete: Cascade)
+    buyerId      String
+    buyer        User              @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+    quantity     Int
+    paymentToken String
+    unitPrice    Float
+    status       NftPurchaseStatus @default(PENDING)
+    txHash       String?
+    firstTokenId String?
+    lastTokenId  String?
+    // The Square payment id for a card purchase, set once it's charged
+    // (`STEP1_CONFIRMED`) — see the enum's own doc comment. Null for a direct
+    // ACTION purchase, which has no equivalent intermediate step.
+    step1TxHash  String?
+    createdAt    DateTime          @default(now())
+
+    @@index([nftId])
+    @@index([buyerId])
+    @@index([status])
+}
+
+// A named grouping of smart-contract NFTs owned by a creator. Optional — an
+// NFT can be minted standalone (collectionId null) or attached to one of the
+// creator's collections. Distinct from the classic-Stellar `Creator`/`Asset`
+// model entirely — this only groups the new on-chain NFTs.
+model Collection {
+    id          String           @id @default(uuid())
+    name        String
+    description String?
+    coverImage  String?
+    creatorId   String
+    creator     User             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    nfts        Nft[]
+    likes       CollectionLike[]
+    createdAt   DateTime         @default(now())
+    updatedAt   DateTime         @updatedAt
+
+    @@unique([creatorId, name])
+    @@index([creatorId])
+}
+
+// Separate from the generic `Like` model (which is hard-coupled to
+// PostGroup) since NFT favorites are keyed on a different entity.
+model NftLike {
+    id        String   @id @default(uuid())
+    nftId     String
+    nft       Nft      @relation(fields: [nftId], references: [id], onDelete: Cascade)
+    userId    String
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    createdAt DateTime @default(now())
+
+    @@unique([nftId, userId])
+    @@index([userId])
+}
+
+// Same pattern as `NftLike`, for favoriting a Collection as a whole rather
+// than an individual NFT within it.
+model CollectionLike {
+    id           String     @id @default(uuid())
+    collectionId String
+    collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+    userId       String
+    user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+    createdAt    DateTime   @default(now())
+
+    @@unique([collectionId, userId])
+    @@index([userId])
 }
