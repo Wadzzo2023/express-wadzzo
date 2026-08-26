@@ -34,6 +34,12 @@ const SECRET = process.env.NEXTAUTH_SECRET;
 
 const SCHEDULE = "17 3 1 */2 *"; // 03:17 on the 1st of every other month
 
+// The sweep runs 6 times a year and fails silently. This asks the chain what
+// actually matters -- how much life the collection's storage has left -- and
+// runs daily, so a stopped sweep surfaces in a day instead of at the next
+// scheduled run. It reads; it never writes.
+const HEALTH_SCHEDULE = "43 4 * * *"; // 04:43 daily
+
 async function runKeepAlive(): Promise<void> {
     if (!SECRET) {
         logger.warn("[keep-alive] NEXTAUTH_SECRET not set — skipping run");
@@ -61,10 +67,48 @@ async function runKeepAlive(): Promise<void> {
     }
 }
 
-/** Registers the cron. Call once at boot, same as `hotspotScheduler`. */
+async function runHealthCheck(): Promise<void> {
+    if (!SECRET) {
+        logger.warn("[keep-alive] NEXTAUTH_SECRET not set — skipping health check");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${APP_URL}/api/internal/keep-alive-health`, {
+            method: "GET",
+            headers: { "x-api-key": SECRET },
+        });
+        const body = (await res.json().catch(() => undefined)) as
+            | { ok?: boolean; daysRemaining?: number; worst?: string; missingCount?: number }
+            | undefined;
+
+        // Anything other than a healthy answer is logged at error level: this
+        // check exists precisely because the failure it looks for is quiet.
+        if (!res.ok || !body?.ok) {
+            logger.error(
+                `[keep-alive] UNHEALTHY — ${body?.daysRemaining ?? "?"} days left on ${body?.worst ?? "?"}` +
+                    (body?.missingCount ? `, ${body.missingCount} entries missing` : ""),
+                body
+            );
+            return;
+        }
+        logger.info(`[keep-alive] Healthy — ${body.daysRemaining} days left (worst: ${body.worst})`);
+    } catch (err) {
+        logger.error(
+            "[keep-alive] Health check threw:",
+            err instanceof Error ? err.message : String(err)
+        );
+    }
+}
+
+/** Registers both crons. Call once at boot, same as `hotspotScheduler`. */
 export function startKeepAliveScheduler(): void {
     cron.schedule(SCHEDULE, () => {
         void runKeepAlive();
     });
-    logger.info(`[keep-alive] Scheduled cron "${SCHEDULE}" (6x/year) → ${APP_URL}`);
+    cron.schedule(HEALTH_SCHEDULE, () => {
+        void runHealthCheck();
+    });
+    logger.info(`[keep-alive] Scheduled sweep "${SCHEDULE}" (6x/year) → ${APP_URL}`);
+    logger.info(`[keep-alive] Scheduled health check "${HEALTH_SCHEDULE}" (daily) → ${APP_URL}`);
 }
