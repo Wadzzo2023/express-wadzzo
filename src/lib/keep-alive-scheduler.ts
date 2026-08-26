@@ -8,25 +8,23 @@
 // service only owns the clock, same "cron here, work there" shape as
 // everything else this task server schedules.
 //
-// Every 28 days, bounded by nft_oz's `BUMP_THRESHOLD` (30 days), not by how
-// long entries live.
+// Six sweeps a year -- 03:17 on the 1st of every other month.
 //
-// `extend_ttl(threshold, extend_to)` only fires when remaining TTL is *below*
-// threshold. So an entry sitting at `BUMP_TO` (120 days) is not renewable
-// until it decays under 30 days remaining, and it expires 30 days after that:
-// the usable window is exactly `BUMP_THRESHOLD` wide, whatever `BUMP_TO` is.
-// A cadence at or above 30 days can therefore skip the window entirely and
-// let data archive.
+// Sized so a *single failed run cannot lose data*. nft_oz keeps entries at
+// `BUMP_TO` (175 days) and lifts them the moment they are written, so the
+// binding number here is not one gap but two: at a ~62-day worst case, two
+// consecutive gaps are 124 days and still fit inside 175. Miss one run and the
+// next still arrives with ~51 days to spare.
 //
-// Raising ownership from OpenZeppelin's hardcoded 30 days to 120 (see nft_oz's
-// `extend_ownership_ttl`) does not widen that window and does not buy a slower
-// cadence -- what it buys is slack. Ownership used to die 30 days after its
-// last touch, so a single missed run left ~2 days of margin; now a run can be
-// missed repeatedly without anything being archived. Widening the window would
-// mean raising `BUMP_THRESHOLD` itself, which is a contract change.
+// That matters because failure here is silent. A skipped cycle archives
+// contract data -- restorable rather than lost, but it costs, and reads break
+// until it is restored. Quarterly would have been cheaper (4 runs instead of
+// 6, ~0.2 XLM a year) and still correct on paper, but a single missed run
+// would have landed 9 days past expiry. The insurance is worth more than the
+// difference. Still less than half the 13 runs a year this used to do.
 //
-// Most sweeps are legitimately no-ops as a result (hence `force: true` on the
-// submission) -- they only do work once an entry has actually decayed.
+// A day-of-month interval cannot express this: cron's day field tops out at
+// 31, so `*/60` is not a valid two-month step. Stepping the *month* field is.
 
 import cron from "node-cron";
 import { logger } from "./logger.js";
@@ -34,7 +32,7 @@ import { logger } from "./logger.js";
 const APP_URL = process.env.BANDFAN_APP_URL;
 const SECRET = process.env.NEXTAUTH_SECRET;
 
-const SCHEDULE = "17 3 */28 * *"; // 03:17, every 28 days
+const SCHEDULE = "17 3 1 */2 *"; // 03:17 on the 1st of every other month
 
 async function runKeepAlive(): Promise<void> {
     if (!SECRET) {
@@ -68,5 +66,5 @@ export function startKeepAliveScheduler(): void {
     cron.schedule(SCHEDULE, () => {
         void runKeepAlive();
     });
-    logger.info(`[keep-alive] Scheduled cron "${SCHEDULE}" (every 28 days) → ${APP_URL}`);
+    logger.info(`[keep-alive] Scheduled cron "${SCHEDULE}" (6x/year) → ${APP_URL}`);
 }
