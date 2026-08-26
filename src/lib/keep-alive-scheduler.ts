@@ -8,10 +8,25 @@
 // service only owns the clock, same "cron here, work there" shape as
 // everything else this task server schedules.
 //
-// Every 28 days: comfortably inside OpenZeppelin's own 30-day
-// ownership-data TTL window (see nft_oz's `keep_alive` doc comment), so a
-// token's ownership data never actually goes stale between runs, with a
-// couple of days' margin for a run that gets delayed or briefly fails.
+// Every 28 days, bounded by nft_oz's `BUMP_THRESHOLD` (30 days), not by how
+// long entries live.
+//
+// `extend_ttl(threshold, extend_to)` only fires when remaining TTL is *below*
+// threshold. So an entry sitting at `BUMP_TO` (120 days) is not renewable
+// until it decays under 30 days remaining, and it expires 30 days after that:
+// the usable window is exactly `BUMP_THRESHOLD` wide, whatever `BUMP_TO` is.
+// A cadence at or above 30 days can therefore skip the window entirely and
+// let data archive.
+//
+// Raising ownership from OpenZeppelin's hardcoded 30 days to 120 (see nft_oz's
+// `extend_ownership_ttl`) does not widen that window and does not buy a slower
+// cadence -- what it buys is slack. Ownership used to die 30 days after its
+// last touch, so a single missed run left ~2 days of margin; now a run can be
+// missed repeatedly without anything being archived. Widening the window would
+// mean raising `BUMP_THRESHOLD` itself, which is a contract change.
+//
+// Most sweeps are legitimately no-ops as a result (hence `force: true` on the
+// submission) -- they only do work once an entry has actually decayed.
 
 import cron from "node-cron";
 import { logger } from "./logger.js";
