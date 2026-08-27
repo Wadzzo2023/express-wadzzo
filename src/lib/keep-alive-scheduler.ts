@@ -8,15 +8,23 @@
 // service only owns the clock, same "cron here, work there" shape as
 // everything else this task server schedules.
 //
-// Every 28 days: comfortably inside OpenZeppelin's own 30-day
-// ownership-data TTL window (see nft_oz's `keep_alive` doc comment), so a
-// token's ownership data never actually goes stale between runs, with a
-// couple of days' margin for a run that gets delayed or briefly fails.
+// Six sweeps a year -- 03:17 on the 1st of every other month.
 //
-// Ported from bandfan's copy of this same file — actionverse and bandfan
-// share the exact same deployed nft_oz contract, but each app has its own
-// database of editions/tokens, so each needs its own cron hitting its own
-// app's `/api/internal/keep-alive`.
+// Sized so a *single failed run cannot lose data*. nft_oz keeps entries at
+// `BUMP_TO` (175 days) and lifts them the moment they are written, so the
+// binding number here is not one gap but two: at a ~62-day worst case, two
+// consecutive gaps are 124 days and still fit inside 175. Miss one run and the
+// next still arrives with ~51 days to spare.
+//
+// That matters because failure here is silent. A skipped cycle archives
+// contract data -- restorable rather than lost, but it costs, and reads break
+// until it is restored. Quarterly would have been cheaper (4 runs instead of
+// 6, ~0.2 XLM a year) and still correct on paper, but a single missed run
+// would have landed 9 days past expiry. The insurance is worth more than the
+// difference. Still less than half the 13 runs a year this used to do.
+//
+// A day-of-month interval cannot express this: cron's day field tops out at
+// 31, so `*/60` is not a valid two-month step. Stepping the *month* field is.
 
 import cron from "node-cron";
 import { logger } from "./logger.js";
@@ -24,7 +32,13 @@ import { logger } from "./logger.js";
 const APP_URL = process.env.ACTIONVERSE_APP_URL ?? "http://localhost:3000";
 const SECRET = process.env.NEXTAUTH_SECRET;
 
-const SCHEDULE = "43 4 */28 * *"; // 04:43, every 28 days — offset from bandfan's run
+const SCHEDULE = "37 3 1 */2 *"; // 03:37 on the 1st of every other month
+
+// The sweep runs 6 times a year and fails silently. This asks the chain what
+// actually matters -- how much life the collection's storage has left -- and
+// runs daily, so a stopped sweep surfaces in a day instead of at the next
+// scheduled run. It reads; it never writes.
+const HEALTH_SCHEDULE = "13 5 * * *"; // 05:13 daily
 
 async function runKeepAlive(): Promise<void> {
     if (!SECRET) {
@@ -53,10 +67,48 @@ async function runKeepAlive(): Promise<void> {
     }
 }
 
-/** Registers the cron. Call once at boot, same as `hotspotScheduler`. */
+async function runHealthCheck(): Promise<void> {
+    if (!SECRET) {
+        logger.warn("[keep-alive] NEXTAUTH_SECRET not set — skipping health check");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${APP_URL}/api/internal/keep-alive-health`, {
+            method: "GET",
+            headers: { "x-api-key": SECRET },
+        });
+        const body = (await res.json().catch(() => undefined)) as
+            | { ok?: boolean; daysRemaining?: number; worst?: string; missingCount?: number }
+            | undefined;
+
+        // Anything other than a healthy answer is logged at error level: this
+        // check exists precisely because the failure it looks for is quiet.
+        if (!res.ok || !body?.ok) {
+            logger.error(
+                `[keep-alive] UNHEALTHY — ${body?.daysRemaining ?? "?"} days left on ${body?.worst ?? "?"}` +
+                    (body?.missingCount ? `, ${body.missingCount} entries missing` : ""),
+                body
+            );
+            return;
+        }
+        logger.info(`[keep-alive] Healthy — ${body.daysRemaining} days left (worst: ${body.worst})`);
+    } catch (err) {
+        logger.error(
+            "[keep-alive] Health check threw:",
+            err instanceof Error ? err.message : String(err)
+        );
+    }
+}
+
+/** Registers both crons. Call once at boot, same as `hotspotScheduler`. */
 export function startKeepAliveScheduler(): void {
     cron.schedule(SCHEDULE, () => {
         void runKeepAlive();
     });
-    logger.info(`[keep-alive] Scheduled cron "${SCHEDULE}" (every 28 days) → ${APP_URL}`);
+    cron.schedule(HEALTH_SCHEDULE, () => {
+        void runHealthCheck();
+    });
+    logger.info(`[keep-alive] Scheduled sweep "${SCHEDULE}" (6x/year) → ${APP_URL}`);
+    logger.info(`[keep-alive] Scheduled health check "${HEALTH_SCHEDULE}" (daily) → ${APP_URL}`);
 }
