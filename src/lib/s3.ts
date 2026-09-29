@@ -168,3 +168,17 @@ function convertSize(value: string) {
     const maxFileSizeInBytes = maxFileSizeInMB * 1024 * 1024;
     return maxFileSizeInBytes;
 }
+
+/** Uploads a private streaming file (served only through presigned GETs). */
+export async function uploadStreamFile(key: string, filePath: string) {
+    const { readFile } = await import("fs/promises");
+    await s3Client.send(
+        new PutObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: key,
+            Body: await readFile(filePath),
+            ContentType: "audio/mp4",
+            CacheControl: "private, max-age=7200",
+        }),
+    );
+}

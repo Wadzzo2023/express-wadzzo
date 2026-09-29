@@ -5,6 +5,7 @@ import { markProcessing, markCompleted, markFailed, addLog, getJob } from "../li
 import { logger } from "../lib/logger.js";
 import { runAgentJob } from "./agent-worker.js";
 import { runCreatePinsJob } from "./create-pins-worker.js";
+import { runTranscodeJob } from "./transcode-audio-worker.js";
 
 const MAX_CONCURRENT = parseInt(process.env.WORKER_CONCURRENCY ?? "5", 10);
 let running = 0;
@@ -45,6 +46,9 @@ export async function enqueueJob(job: Job): Promise<void> {
                 break;
             case "create_pins":
                 result = await Promise.race([runCreatePinsJob(job), timeoutPromise]);
+                break;
+            case "transcode_audio":
+                result = await Promise.race([runTranscodeJob(job), timeoutPromise]);
                 break;
             case "generic":
                 result = { ok: true };

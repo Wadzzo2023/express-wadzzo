@@ -7,6 +7,7 @@
         "dev": "tsx watch src/index.ts",
         "build": "tsc --noEmitOnError false --skipLibCheck > /dev/null 2>&1 || true",
         "start": "node dist/index.js",
+        "test": "node --import tsx --test \"src/**/*.test.ts\"",
         "db:generate": "prisma generate",
         "db:push": "prisma db push",
         "db:migrate": "prisma migrate deploy"

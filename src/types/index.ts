@@ -5,6 +5,7 @@ import { PinOptions } from "../agent/types";
 export type JobType =
     | "agent_run"          // main agent pipeline (classify → run → store result)
     | "create_pins"   // ← add this
+    | "transcode_audio" // full + 30s preview AAC streams for an asset
     | "generic";           // extensible for future tasks
 
 export type JobStatus =

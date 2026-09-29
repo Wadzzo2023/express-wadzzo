@@ -16,6 +16,7 @@ import jobsRouter from "./routes/jobs.js";
 import healthRouter from "./routes/health.js";
 import hotspotsRouter from "./routes/hotspots.js";
 import musicRouter, { handleMusicWebSocket } from "./routes/music.js";
+import mediaRouter from "./routes/media.js";
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? "4000", 10);
@@ -62,6 +63,7 @@ app.use("/hotspots", limiter);
 app.use("/health", healthRouter);
 app.use("/jobs", jobsRouter);
 app.use("/hotspots", hotspotsRouter); // internal-only — no auth, creatorId comes from request body
+app.use("/media", limiter, mediaRouter); // no auth for now, same as /jobs
 app.use("/music", limiter);
 app.use("/music", musicRouter);
 
@@ -126,6 +128,12 @@ const server = app.listen(PORT, () => {
 
     if (!process.env.NEXTAUTH_SECRET) {
         logger.warn("  NEXTAUTH_SECRET not set — authentication is disabled");
+    }
+
+    // Local development against a dev DB: skip cron work (pin drops, keep-alive).
+    if (process.env.DISABLE_SCHEDULERS === "1") {
+        logger.info("  Schedulers disabled (DISABLE_SCHEDULERS=1)");
+        return;
     }
 
     // ── Restore all active hotspot schedules from DB ────────────────────────
