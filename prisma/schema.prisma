@@ -2,8 +2,11 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-    provider      = "prisma-client-js"
-    binaryTargets = ["native", "rhel-openssl-1.0.x"]
+    provider        = "prisma-client-js"
+    binaryTargets   = ["native", "rhel-openssl-1.0.x"]
+    // Load nested relations with SQL joins in one query instead of one query per
+    // relation level (list pages went from ~6 round trips to 1).
+    previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -264,6 +267,15 @@ model Creator {
     locationGroupJobs   LocationGroupJob[]
     locationTags        LocationTag[]
 
+    // Facebook sync
+    facebookPageId      String?
+    facebookPageName    String?
+    facebookPageToken   String? // AES-256-GCM, "iv:tag:ciphertext" hex
+    facebookAutoPublish Boolean @default(false)
+
+    vanityPayments VanityPayment[]
+    royaltyPayouts RoyaltyPayout[]
+
     @@index([bio, name])
 }
 
@@ -287,7 +299,36 @@ model Appearance {
     theme     Json? // Store theme as JSON
     isPublic  Boolean  @default(false)
 
+    // Profile Builder (v2). Nullable during migration; required after backfill.
+    templateKey     String?
+    isActive        Boolean      @default(false) // the artist's one live layout
+    status          LayoutStatus @default(DRAFT)
+    blocks          Json? // Block[] working draft
+    publishedBlocks Json? // Block[] snapshot served to visitors
+    publishedAt     DateTime?
+
     @@index([creatorId])
+    @@index([creatorId, isActive])
+}
+
+enum LayoutStatus {
+    DRAFT
+    PUBLISHED
+}
+
+// Platform-owned starter layouts every artist can adopt.
+model LayoutTemplate {
+    id            String   @id @default(cuid())
+    key           String   @unique // "musician" | "visual-artist" | ...
+    name          String
+    description   String
+    previewImage  String?
+    isSeedDefault Boolean  @default(false) // exactly one true
+    order         Int      @default(0)
+    blocks        Json // Block[]
+    theme         Json?
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @updatedAt
 }
 
 model Widget {
@@ -318,6 +359,10 @@ model VanitySubscription {
     // Payment tracking
     lastPaymentAmount Float
     lastPaymentDate   DateTime
+
+    status        VanityStatus @default(ACTIVE)
+    graceEndsAt   DateTime?
+    reservedUntil DateTime?
 }
 
 model PostGroup {
@@ -337,6 +382,10 @@ model PostGroup {
     likes       Like[]
     comments    Comment[]
     medias      Media[]
+
+    // Facebook sync
+    fbPostId   String? @unique
+    importOnly Boolean @default(false)
 }
 
 model Post {
@@ -400,6 +449,7 @@ model User {
     email             String?   @unique
     bio               String?
     image             String?
+    coverImage        String?
     emailVerified     DateTime?
     firstSignUpMethod String? // e.g. email, google, github, etc.
 
@@ -437,6 +487,15 @@ model User {
     // Personal, invisible-to-everyone-else AR pin sets from a gated NFT's
     // unlock rule — see `LocationGroup.restrictedToUserId`.
     restrictedPinGroups LocationGroup[]  @relation("RestrictedPinGroups")
+    playlists           Playlist[]
+    favoriteSongs       SongFavorite[]
+
+    // Public profile handle (/u/[username]) — see docs/plans/07.
+    username          String?     @unique
+    usernameChangedAt DateTime?
+    showCollection    Boolean     @default(true)
+    ownerships        Ownership[]
+    orders            Order[]
 }
 
 model LastFMAccount {
@@ -472,6 +531,10 @@ model Album {
     creator     Creator? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
     createdAt   DateTime @default(now())
     songs       Song[]
+
+    slug String? @unique
+
+    @@index([creatorId])
 }
 
 model Song {
@@ -493,7 +556,58 @@ model Song {
 
     createdAt DateTime @default(now())
 
+    duration  Int? // duration in seconds
+    playCount Int  @default(0) // total times played
+
     User_Song User_Song[]
+    playlists PlaylistSong[]
+    favorites SongFavorite[]
+
+    @@index([albumId])
+    @@index([creatorId])
+}
+
+model Playlist {
+    id          String         @id @default(cuid())
+    name        String
+    description String?
+    coverUrl    String?
+    isPublic    Boolean        @default(true)
+    userId      String
+    user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+    songs       PlaylistSong[]
+    createdAt   DateTime       @default(now())
+    updatedAt   DateTime       @updatedAt
+
+    // A given user can't have two playlists with the same name (so the
+    // auto-created "Liked Songs" playlist can be safely upserted on), but
+    // different users can each have their own "Liked Songs" — the constraint
+    // is scoped per-user, not global.
+    @@unique([userId, name])
+    @@index([userId])
+}
+
+model PlaylistSong {
+    id         String   @id @default(cuid())
+    playlistId String
+    playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+    songId     Int
+    song       Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+    sortOrder  Int      @default(0)
+    addedAt    DateTime @default(now())
+
+    @@unique([playlistId, songId])
+    @@index([playlistId, sortOrder])
+}
+
+model SongFavorite {
+    userId    String
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    songId    Int
+    song      Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+    createdAt DateTime @default(now())
+
+    @@id([userId, songId])
 }
 
 model User_Song {
@@ -540,6 +654,9 @@ model Asset {
     thumbnail    String
     demoMediaUrl String?
 
+    duration  Int? // duration in seconds
+    playCount Int  @default(0) // total times played
+
     fundEndDate DateTime?
 
     releaseDate DateTime?
@@ -560,8 +677,22 @@ model Asset {
     royaltyReport RoyaltyReport[]
     Stem          Stem[]
 
+    // Streaming pipeline (docs/plans/04). LEGACY = uploaded before the pipeline.
+    mediaStatus     MediaStatus @default(LEGACY)
+    previewStartSec Int         @default(0)
+    streamKey       String?
+    previewKey      String?
+    waveformKey     String?
+    accentColor     String?
+    slug            String?     @unique
+    deletedAt       DateTime?
+    ownerships      Ownership[]
+    playEvents      PlayEvent[]
+
     @@unique([code, issuer])
     @@index([name, description])
+    @@index([creatorId, createdAt])
+    @@index([mediaType, privacy])
 }
 
 model Stem {
@@ -625,7 +756,10 @@ model MarketAsset {
 
     createdAt DateTime @default(now())
 
+    orders Order[]
+
     @@unique([assetId, placerId])
+    @@index([type, placedAt])
 }
 
 // ------------------------Wallete SCHEMA-------------------------
@@ -827,12 +961,14 @@ model LocationConsumer {
     userId String
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    locationId String
-    location   Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
-    redeemCode String    @unique
-    isRedeemed Boolean   @default(false)
-    redeemedAt DateTime?
-    claimedAt  DateTime?
+    locationId     String
+    location       Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+    redeemCode     String    @unique
+    isRedeemed     Boolean   @default(false)
+    redeemedAt     DateTime?
+    claimedAt      DateTime?
+    // Set when the pin's on-chain reward transaction is issued; one per consumer.
+    tokenClaimedAt DateTime?
 
     viewedAt DateTime?
 
@@ -1102,6 +1238,8 @@ model RedeemConsumer {
     code       String
     redeemCode Redeem   @relation(fields: [code], references: [code], onDelete: Cascade)
     redeemedAt DateTime @default(now())
+
+    @@unique([userId, code])
 }
 
 model SellPageAsset {
@@ -1453,8 +1591,44 @@ model NftToken {
     createdAt       DateTime        @default(now())
     updatedAt       DateTime        @updatedAt
 
+    contentRedeems NftContentRedeem[]
+
     @@index([nftId])
     @@index([ownerId])
+}
+
+// One redeemable code per (copy, locked-content item) — the digital
+// equivalent of a ticket stub attached to that specific copy.
+//
+// Deliberately keyed on the token and the content item, never on a user:
+// that is what makes a half-used sheet of codes survive a resale or a
+// re-gift untouched. If the sender spent two of five, the next owner
+// inherits exactly three usable codes, because nothing here refers to
+// who held it at the time.
+//
+// Distinct from `unlock_item_for` on-chain, which decides whether content
+// is *visible*. A song can be fully unlocked and still have an unspent
+// code; the two states are independent, except that a locked item's code
+// cannot be spent yet (you cannot use what you have not earned).
+model NftContentRedeem {
+    // Short human-readable code, read aloud at a venue door.
+    code         String    @id
+    nftTokenId   String
+    nftToken     NftToken  @relation(fields: [nftTokenId], references: [tokenId], onDelete: Cascade)
+    // `NftLockedMedia.chainIndex` — the item's permanent on-chain index,
+    // not its database id, so it lines up with `is_item_unlocked`.
+    mediaIndex   Int
+    isRedeemed   Boolean   @default(false)
+    redeemedAt   DateTime?
+    // Which creator burned it. Any creator may redeem, matching how
+    // `redeemByCode` already works for location pins.
+    redeemedById String?
+    createdAt    DateTime  @default(now())
+
+    // Generated once, on the copy's first gift; a later re-gift must reuse
+    // the same sheet rather than minting a fresh one.
+    @@unique([nftTokenId, mediaIndex])
+    @@index([nftTokenId])
 }
 
 // One row per secondary-market listing of a single already-minted copy —
@@ -1582,4 +1756,154 @@ model CollectionLike {
 
     @@unique([collectionId, userId])
     @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Platform overhaul (docs/plans/03)
+// ---------------------------------------------------------------------------
+
+enum MediaStatus {
+    LEGACY
+    PENDING
+    PROCESSING
+    READY
+    FAILED
+}
+
+enum OwnershipSource {
+    PURCHASE
+    GIFT
+    TRANSFER
+    CREATOR
+    REDEEM
+    SYNC
+}
+
+/// Owned-items cache. On-chain balance is the truth; this makes access checks
+/// instant and is reconciled from Horizon.
+model Ownership {
+    userId   String
+    user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+    assetId  Int
+    asset    Asset           @relation(fields: [assetId], references: [id], onDelete: Cascade)
+    quantity Float
+    source   OwnershipSource
+    syncedAt DateTime        @updatedAt
+
+    @@id([userId, assetId])
+    @@index([assetId])
+}
+
+enum PayMethod {
+    WALLET
+    CARD
+}
+
+enum OrderStatus {
+    PENDING
+    PAID
+    DELIVERED
+    FAILED
+    REFUNDED
+}
+
+/// One row per checkout (wallet or card, logged-in or guest).
+model Order {
+    id              String      @id @default(cuid())
+    buyerId         String?
+    buyer           User?       @relation(fields: [buyerId], references: [id], onDelete: SetNull)
+    guestEmail      String?
+    marketAssetId   Int
+    marketAsset     MarketAsset @relation(fields: [marketAssetId], references: [id], onDelete: Restrict)
+    quantity        Int
+    unitPrice       Float
+    currency        String
+    method          PayMethod
+    status          OrderStatus @default(PENDING)
+    squarePaymentId String?     @unique
+    txHash          String?     @unique
+    createdAt       DateTime    @default(now())
+    updatedAt       DateTime    @updatedAt
+
+    @@index([buyerId, createdAt])
+    @@index([marketAssetId, createdAt])
+}
+
+/// A counted play (30s+ of playback), deduplicated per session.
+model PlayEvent {
+    id        BigInt   @id @default(autoincrement())
+    assetId   Int
+    asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+    userId    String?
+    sessionId String
+    isPreview Boolean
+    createdAt DateTime @default(now())
+
+    @@index([assetId, createdAt])
+    @@index([sessionId, assetId, createdAt])
+}
+
+enum VanityStatus {
+    TRIAL
+    ACTIVE
+    GRACE
+    LAPSED
+}
+
+enum VanityPaymentKind {
+    FREE_TRIAL
+    RENEWAL
+    NAME_CHANGE
+}
+
+model VanityPayment {
+    id        String            @id @default(cuid())
+    creatorId String
+    creator   Creator           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    amount    Float
+    kind      VanityPaymentKind
+    txHash    String?           @unique
+    periodEnd DateTime
+    createdAt DateTime          @default(now())
+
+    @@index([creatorId])
+}
+
+enum PayoutStatus {
+    DRAFT
+    SUBMITTING
+    PARTIAL
+    COMPLETE
+    FAILED
+}
+
+model RoyaltyPayout {
+    id          String              @id @default(cuid())
+    assetId     Int
+    creatorId   String
+    creator     Creator             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    totalAmount Float
+    currency    String
+    reportId    Int?
+    status      PayoutStatus        @default(DRAFT)
+    createdAt   DateTime            @default(now())
+    lines       RoyaltyPayoutLine[]
+
+    @@index([assetId])
+    @@index([creatorId])
+}
+
+model RoyaltyPayoutLine {
+    id       String        @id @default(cuid())
+    payoutId String
+    payout   RoyaltyPayout @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+    holder   String
+    balance  Float
+    amount   Float
+    batchNo  Int
+    txHash   String?
+    status   String        @default("PENDING")
+
+    @@index([payoutId])
+    @@index([holder])
 }
