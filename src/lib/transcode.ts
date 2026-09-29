@@ -42,10 +42,25 @@ export function previewArgs(input: string, output: string, window: { start: numb
     ];
 }
 
+/** Stems keep their relative levels: no loudness normalisation, so they add up to the mix. */
+export function stemArgs(input: string, output: string): string[] {
+    return [
+        "-hide_banner", "-y", "-i", input,
+        "-vn", "-map_metadata", "-1",
+        "-c:a", "aac", "-b:a", "256k", "-ar", "44100",
+        "-movflags", "+faststart",
+        output,
+    ];
+}
+
 /** A fresh random folder per transcode: the bucket may be public-read. */
 export function streamKeys(assetId: number) {
     const dir = `stream/${assetId}/${randomBytes(16).toString("hex")}`;
-    return { full: `${dir}/full.m4a`, preview: `${dir}/preview.m4a` };
+    return {
+        full: `${dir}/full.m4a`,
+        preview: `${dir}/preview.m4a`,
+        stem: (index: number) => `${dir}/stems/${index}.m4a`,
+    };
 }
 
 function run(bin: string, args: string[]): Promise<string> {

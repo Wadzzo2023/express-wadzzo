@@ -1,8 +1,9 @@
 // src/workers/transcode-audio-worker.ts
 //
 // Turns an asset's uploaded audio into streaming files:
-//   stream/{assetId}/{random}/full.m4a     — owners (AAC 256k, faststart)
-//   stream/{assetId}/{random}/preview.m4a  — everyone else (30s from previewStartSec)
+//   stream/{assetId}/{random}/full.m4a      — owners (AAC 256k, faststart)
+//   stream/{assetId}/{random}/preview.m4a   — everyone else (30s from previewStartSec)
+//   stream/{assetId}/{random}/stems/{i}.m4a — owners' stem player (no loudnorm)
 // then marks the asset READY with its real duration.
 //
 // This service's Prisma schema predates the streaming columns, so the Asset
@@ -17,9 +18,16 @@ import { db } from "../lib/db.js";
 import { logger } from "../lib/logger.js";
 import { addLog, setProgress } from "../lib/job-store.js";
 import { uploadStreamFile } from "../lib/s3.js";
-import { ffmpeg, fullArgs, previewArgs, previewWindow, probeDuration, streamKeys } from "../lib/transcode.js";
+import { ffmpeg, fullArgs, previewArgs, previewWindow, probeDuration, stemArgs, streamKeys } from "../lib/transcode.js";
 
 type SourceRow = { mediaUrl: string; demoMediaUrl: string | null; previewStartSec: number };
+type StemRow = { id: number; steamUrl: string; trackIndex: number };
+
+const STEM_CONCURRENCY = 3;
+
+async function inBatches<T>(items: T[], size: number, run: (item: T) => Promise<void>) {
+    for (let i = 0; i < items.length; i += size) await Promise.all(items.slice(i, i + size).map(run));
+}
 
 async function setStatus(assetId: number, status: "PROCESSING" | "FAILED") {
     await db.$executeRaw`UPDATE "Asset" SET "mediaStatus" = ${status}::"MediaStatus" WHERE id = ${assetId}`;
@@ -62,6 +70,19 @@ export async function runTranscodeJob(job: Job): Promise<unknown> {
         if (hasFull) await uploadStreamFile(keys.full, fullOut);
         await uploadStreamFile(keys.preview, previewOut);
 
+        const stems = await db.$queryRaw<StemRow[]>`
+            SELECT id, "steamUrl", "trackIndex" FROM "Stem" WHERE "assetId" = ${assetId} ORDER BY "trackIndex"`;
+        await inBatches(stems, STEM_CONCURRENCY, async (stem) => {
+            const stemIn = path.join(dir, `stem-${stem.id}`);
+            const stemOut = path.join(dir, `stem-${stem.id}.m4a`);
+            await download(stem.steamUrl, stemIn);
+            await ffmpeg(stemArgs(stemIn, stemOut));
+            const key = keys.stem(stem.trackIndex);
+            await uploadStreamFile(key, stemOut);
+            await db.$executeRaw`UPDATE "Stem" SET "streamKey" = ${key} WHERE id = ${stem.id}`;
+        });
+        setProgress(job.id, 95);
+
         const seconds = Math.round(duration);
         const streamKey = hasFull ? keys.full : null;
         await db.$transaction([
@@ -69,8 +90,8 @@ export async function runTranscodeJob(job: Job): Promise<unknown> {
                 "previewKey" = ${keys.preview}, duration = ${seconds} WHERE id = ${assetId}`,
             db.$executeRaw`UPDATE "Song" SET duration = ${seconds} WHERE "assetId" = ${assetId}`,
         ]);
-        addLog(job.id, { msg: `Asset ${assetId} ready (${seconds}s)`, level: "info" });
-        return { assetId, duration: seconds, full: Boolean(streamKey) };
+        addLog(job.id, { msg: `Asset ${assetId} ready (${seconds}s, ${stems.length} stems)`, level: "info" });
+        return { assetId, duration: seconds, full: Boolean(streamKey), stems: stems.length };
     } catch (err) {
         logger.error(`[transcode] asset ${assetId} failed: ${err instanceof Error ? err.message : String(err)}`);
         await setStatus(assetId, "FAILED").catch(() => undefined);

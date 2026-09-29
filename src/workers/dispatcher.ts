@@ -26,7 +26,9 @@ function releaseSlot(): void {
 
 export async function enqueueJob(job: Job): Promise<void> {
     await acquireSlot();
-    const timeout = parseInt(process.env.JOB_TIMEOUT_MS ?? "300000", 10);
+    const defaultTimeout = parseInt(process.env.JOB_TIMEOUT_MS ?? "300000", 10);
+    // A song with 16 stems is 18 ffmpeg runs; give transcodes room.
+    const timeout = job.type === "transcode_audio" ? Math.max(defaultTimeout, 20 * 60 * 1000) : defaultTimeout;
 
     try {
         const j = markProcessing(job.id);

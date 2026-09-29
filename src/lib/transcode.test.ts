@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { fullArgs, previewArgs, previewWindow, streamKeys } from "./transcode.js";
+import { fullArgs, previewArgs, previewWindow, stemArgs, streamKeys } from "./transcode.js";
 
 test("preview window starts where the creator chose", () => {
     assert.deepEqual(previewWindow(240, 60), { start: 60, length: 30 });
@@ -48,4 +48,20 @@ test("stream keys live under stream/{assetId}/ with an unguessable segment", () 
     assert.match(a.full, /^stream\/5\/[0-9a-f]{32}\/full\.m4a$/);
     assert.match(a.preview, /^stream\/5\/[0-9a-f]{32}\/preview\.m4a$/);
     assert.notEqual(a.full, b.full);
+});
+
+test("stems: AAC 256k with no loudness normalisation, so they still add up to the mix", () => {
+    const args = stemArgs("vocals.wav", "0.m4a");
+    assert.equal(args[args.indexOf("-b:a") + 1], "256k");
+    assert.equal(args[args.indexOf("-movflags") + 1], "+faststart");
+    assert.ok(!args.join(" ").includes("loudnorm"));
+    assert.ok(!args.includes("-af"));
+    assert.equal(args.at(-1), "0.m4a");
+});
+
+test("stem keys sit in the asset's stream folder, one per track index", () => {
+    const keys = streamKeys(5);
+    const dir = keys.full.replace(/\/full\.m4a$/, "");
+    assert.equal(keys.stem(0), `${dir}/stems/0.m4a`);
+    assert.equal(keys.stem(11), `${dir}/stems/11.m4a`);
 });
