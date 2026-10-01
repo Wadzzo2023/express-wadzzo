@@ -10,7 +10,7 @@ import { z } from "zod";
 import { ItemPrivacy, Prisma, PinType } from "@prisma/client";
 import { db } from "../lib/db";
 import { hotspotScheduler } from "../lib/hotspot-scheduler";
-import { dropPinsForHotspot } from "../lib/hotspot-drop";
+import { dropPinsForHotspot, isPendingFirstDrop } from "../lib/hotspot-drop";
 import { generateRandomLocations } from "../lib/map";
 import { logger } from "../lib/logger";
 
@@ -90,7 +90,16 @@ router.post(
         const now = new Date();
         const hotspotStartDate = new Date(input.hotspotStartDate);
         const hotspotEndDate = new Date(input.hotspotEndDate);
-        const firstDropEnd = new Date(now.getTime() + input.pinDurationDays * 86_400_000);
+        if (hotspotEndDate <= hotspotStartDate) {
+            res.status(400).json({ error: "hotspotEndDate must be after hotspotStartDate" });
+            return;
+        }
+        // Starting later: the first drop is created now (it carries the content
+        // later drops copy) but stays hidden until the start date, when the
+        // scheduler releases it. Starting now: it goes live straight away.
+        const startsLater = hotspotStartDate.getTime() > now.getTime() + 60_000;
+        const firstDropStart = startsLater ? hotspotStartDate : now;
+        const firstDropEnd = new Date(firstDropStart.getTime() + input.pinDurationDays * 86_400_000);
 
         const hotspot = await db.hotspot.create({
             data: {
@@ -121,8 +130,9 @@ router.post(
                         limit: input.pinCollectionLimit,
                         remaining: input.pinCollectionLimit,
                         subscriptionId: tierId,
-                        startDate: now,
+                        startDate: firstDropStart,
                         endDate: firstDropEnd,
+                        hidden: startsLater,
                         approved: true,
                         locations: {
                             createMany: {
@@ -142,10 +152,12 @@ router.post(
             },
         });
 
-        const daysRemaining = (hotspotEndDate.getTime() - now.getTime()) / 86_400_000;
-        if (daysRemaining > input.dropEveryDays) {
-            hotspotScheduler.start(hotspot.id, creatorId, input.dropEveryDays, now);
-            logger.info(`[hotspots] Schedule started for hotspot=${hotspot.id}`);
+        // Drops repeat from the moment the hotspot starts; a later start also
+        // needs the scheduler to release the first drop on time.
+        const daysRemaining = (hotspotEndDate.getTime() - firstDropStart.getTime()) / 86_400_000;
+        if (startsLater || daysRemaining > input.dropEveryDays) {
+            hotspotScheduler.start(hotspot.id, creatorId, input.dropEveryDays, firstDropStart, startsLater ? hotspotStartDate : undefined);
+            logger.info(`[hotspots] Schedule started for hotspot=${hotspot.id}${startsLater ? ` (first drop ${hotspotStartDate.toISOString()})` : ""}`);
         }
 
         res.status(201).json({ hotspotId: hotspot.id });
@@ -263,12 +275,17 @@ router.post(
         const { creatorId } = parse.data;
         const hotspot = await db.hotspot.findFirst({
             where: { id: req.params.id, creatorId },
-            select: { id: true, dropEveryDays: true, createdAt: true },
+            select: {
+                id: true, dropEveryDays: true, createdAt: true, hotspotStartDate: true,
+                locationGroups: { where: { hidden: true }, select: { hidden: true, startDate: true, createdAt: true } },
+            },
         });
         if (!hotspot) { res.status(404).json({ error: "Hotspot not found" }); return; }
 
         if (!hotspotScheduler.has(req.params.id)) {
-            hotspotScheduler.start(req.params.id, creatorId, hotspot.dropEveryDays, hotspot.createdAt);
+            const anchor = hotspot.hotspotStartDate > hotspot.createdAt ? hotspot.hotspotStartDate : hotspot.createdAt;
+            const pending = hotspot.locationGroups.some(isPendingFirstDrop);
+            hotspotScheduler.start(req.params.id, creatorId, hotspot.dropEveryDays, anchor, pending ? hotspot.hotspotStartDate : undefined);
         } else {
             hotspotScheduler.resume(req.params.id);
         }
@@ -332,7 +349,7 @@ router.post(
         });
         if (!hotspot) { res.status(404).json({ error: "Hotspot not found" }); return; }
 
-        const result = await dropPinsForHotspot(db, req.params.id);
+        const result = await dropPinsForHotspot(db, req.params.id, { force: true });
 
         if ("expired" in result && result.expired) {
             hotspotScheduler.stop(req.params.id);

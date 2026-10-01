@@ -17,7 +17,7 @@ import cron from "node-cron";
 import cronParser from "cron-parser";
 import { db } from "./db.js";
 import { logger } from "./logger.js";
-import { dropPinsForHotspot } from "./hotspot-drop";
+import { dropPinsForHotspot, isPendingFirstDrop } from "./hotspot-drop";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,7 +27,13 @@ interface ScheduledHotspot {
     dropEveryDays: number;
     task: ReturnType<typeof cron.schedule>;
     anchorDate: Date;
+    /** When the hotspot starts later: release the first drop exactly then. */
+    firstDropAt?: Date;
+    firstDropTimer?: ReturnType<typeof setTimeout>;
 }
+
+/** setTimeout can't wait longer than ~24.8 days; longer waits re-arm in steps. */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -54,7 +60,7 @@ class HotspotScheduler {
      * Register and immediately start a cron for this hotspot.
      * Safe to call multiple times — stops any existing task first.
      */
-    start(hotspotId: string, creatorId: string, dropEveryDays: number, anchorDate: Date = new Date()): void {
+    start(hotspotId: string, creatorId: string, dropEveryDays: number, anchorDate: Date = new Date(), firstDropAt?: Date): void {
         this.stop(hotspotId); // idempotent — clear any stale task
 
         const expression = buildCronExpression(dropEveryDays, anchorDate);
@@ -66,7 +72,30 @@ class HotspotScheduler {
             void this.runDrop(hotspotId);
         });
 
-        this.schedules.set(hotspotId, { hotspotId, creatorId, dropEveryDays, task, anchorDate });
+        const entry: ScheduledHotspot = { hotspotId, creatorId, dropEveryDays, task, anchorDate, firstDropAt };
+        this.schedules.set(hotspotId, entry);
+        this.armFirstDrop(entry);
+    }
+
+    /** One-off timer for the first drop (cron's "every N days" may not land on the start date). */
+    private armFirstDrop(entry: ScheduledHotspot): void {
+        if (entry.firstDropTimer) clearTimeout(entry.firstDropTimer);
+        entry.firstDropTimer = undefined;
+        if (!entry.firstDropAt) return;
+        const wait = entry.firstDropAt.getTime() - Date.now();
+        if (wait <= 0) {
+            entry.firstDropAt = undefined;
+            void this.runDrop(entry.hotspotId);
+            return;
+        }
+        entry.firstDropTimer = setTimeout(() => {
+            if (wait > MAX_TIMEOUT_MS) this.armFirstDrop(entry);
+            else {
+                entry.firstDropAt = undefined;
+                entry.firstDropTimer = undefined;
+                void this.runDrop(entry.hotspotId);
+            }
+        }, Math.min(wait, MAX_TIMEOUT_MS));
     }
 
     /**
@@ -80,6 +109,8 @@ class HotspotScheduler {
             return false;
         }
         entry.task.stop();
+        if (entry.firstDropTimer) clearTimeout(entry.firstDropTimer);
+        entry.firstDropTimer = undefined;
         logger.info(`[hotspot-scheduler] Paused hotspot=${hotspotId}`);
         return true;
     }
@@ -95,6 +126,7 @@ class HotspotScheduler {
             return false;
         }
         entry.task.start();
+        this.armFirstDrop(entry); // still waiting for the start date? re-arm (or drop now if it passed)
         logger.info(`[hotspot-scheduler] Resumed hotspot=${hotspotId}`);
         return true;
     }
@@ -107,6 +139,7 @@ class HotspotScheduler {
         const entry = this.schedules.get(hotspotId);
         if (!entry) return;
         entry.task.stop();
+        if (entry.firstDropTimer) clearTimeout(entry.firstDropTimer);
         this.schedules.delete(hotspotId);
         logger.info(`[hotspot-scheduler] Deleted schedule for hotspot=${hotspotId}`);
     }
@@ -144,8 +177,10 @@ class HotspotScheduler {
                 id: true,
                 creatorId: true,
                 dropEveryDays: true,
+                hotspotStartDate: true,
                 hotspotEndDate: true,
                 createdAt: true,
+                locationGroups: { where: { hidden: true }, select: { hidden: true, startDate: true, createdAt: true } },
             },
         });
 
@@ -163,7 +198,12 @@ class HotspotScheduler {
                 continue;
             }
 
-            this.start(h.id, h.creatorId, h.dropEveryDays, h.createdAt);
+            // Drops repeat from the start (or creation, whichever is later). A first
+            // drop still waiting to be released is re-armed — or released now if
+            // its time passed while the server was down.
+            const anchor = h.hotspotStartDate > h.createdAt ? h.hotspotStartDate : h.createdAt;
+            const pending = h.locationGroups.some(isPendingFirstDrop);
+            this.start(h.id, h.creatorId, h.dropEveryDays, anchor, pending ? h.hotspotStartDate : undefined);
             restored++;
         }
 

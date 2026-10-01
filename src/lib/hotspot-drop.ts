@@ -21,6 +21,28 @@ export type DropResult =
     | { expired: true }
     | { droppedAt: string; count: number };
 
+/** Cron ticks can fire a little early or late. */
+const START_TOLERANCE_MS = 60_000;
+
+/**
+ * A hotspot that starts in the future gets its first drop created up front,
+ * hidden, dated for the start (it carries the title/image/etc. every later drop
+ * copies). It's recognisable because it was created well before its start;
+ * once released, startDate and createdAt are both reset to the release time.
+ */
+export function isPendingFirstDrop(group: { hidden: boolean; startDate: Date; createdAt: Date }) {
+    return group.hidden && group.startDate.getTime() - group.createdAt.getTime() > START_TOLERANCE_MS;
+}
+
+async function findPendingFirstDrop(prisma: PrismaClient, hotspotId: string) {
+    const hidden = await prisma.locationGroup.findMany({
+        where: { hotspotId, hidden: true },
+        select: { id: true, hidden: true, startDate: true, createdAt: true, _count: { select: { locations: true } } },
+        orderBy: { createdAt: "asc" },
+    });
+    return hidden.find(isPendingFirstDrop) ?? null;
+}
+
 // ─── Core drop function ───────────────────────────────────────────────────────
 
 /**
@@ -38,7 +60,9 @@ export type DropResult =
  */
 export async function dropPinsForHotspot(
     prisma: PrismaClient,
-    hotspotId: string
+    hotspotId: string,
+    /** `force` skips the one-drop-per-cycle guard (manual drops). */
+    options: { force?: boolean } = {}
 ): Promise<DropResult> {
     // ── Step 1: Load hotspot ───────────────────────────────────────────────────
     const hotspot = await prisma.hotspot.findUnique({
@@ -67,10 +91,48 @@ export async function dropPinsForHotspot(
         return { expired: true };
     }
 
+    // ── Step 2b: Not started yet ───────────────────────────────────────────────
+    const startAt = new Date(hotspot.hotspotStartDate);
+    if (now.getTime() < startAt.getTime() - START_TOLERANCE_MS) {
+        return { skipped: true, reason: "hotspot has not started yet" };
+    }
+
+    // ── Step 2c: Reveal the first drop created ahead of the start date ─────────
+    const pending = await findPendingFirstDrop(prisma, hotspotId);
+    if (pending) {
+        await prisma.locationGroup.update({
+            where: { id: pending.id },
+            data: {
+                hidden: false,
+                startDate: now,
+                createdAt: now, // no longer "created ahead of its start" (see isPendingFirstDrop)
+                endDate: new Date(now.getTime() + hotspot.pinDurationDays * 86_400_000),
+            },
+        });
+        logger.info(`[hotspot-drop] Released first drop for hotspot=${hotspotId}`);
+        return { droppedAt: now.toISOString(), count: pending._count.locations };
+    }
+
+    // ── Step 2d: One drop per cycle ────────────────────────────────────────────
+    // The cron tick and the first-drop timer (or a restart) can fire within
+    // moments of each other; only the first of them drops.
+    if (!options.force) {
+        const latest = await prisma.locationGroup.findFirst({
+            where: { hotspotId, hidden: false },
+            orderBy: { startDate: "desc" },
+            select: { startDate: true },
+        });
+        const cycleMs = hotspot.dropEveryDays * 86_400_000;
+        if (latest && now.getTime() - latest.startDate.getTime() < cycleMs - 10 * 60_000) {
+            return { skipped: true, reason: "already dropped this cycle" };
+        }
+    }
+
     // ── Step 3: Read latest group for content fields ───────────────────────────
     const lastGroup = await prisma.locationGroup.findFirst({
         where: { hotspotId },
         orderBy: { startDate: "desc" },
+        include: { _count: { select: { locations: true } } },
     });
 
     if (!lastGroup) {
@@ -84,7 +146,9 @@ export async function dropPinsForHotspot(
     const rawLocations = generateRandomLocations(
         hotspot.shape as "circle" | "rectangle" | "polygon",
         hotspot.geoJson as GeoJSON.Feature | null,
-        lastGroup.limit ?? 0
+        // Same number of pins as the previous drop (the brand's "pins per drop").
+        // Not `limit` — that's the collection limit, and 0 means unlimited.
+        Math.max(1, lastGroup._count.locations)
     );
 
     const locations = rawLocations.map((loc) => ({
