@@ -297,6 +297,98 @@ router.post(
     })
 );
 
+// ─── PATCH /hotspots/:id ──────────────────────────────────────────────────────
+// Change the schedule or collection settings. Reschedules the cron job when the
+// timing changes, and moves a not-yet-released first drop to the new start.
+
+const UpdateHotspotSchema = z.object({
+    creatorId: z.string().min(1),
+    hotspotStartDate: z.string().datetime().optional(),
+    hotspotEndDate: z.string().datetime().optional(),
+    dropEveryDays: z.number().int().min(1).optional(),
+    pinDurationDays: z.number().int().min(1).optional(),
+    autoCollect: z.boolean().optional(),
+    multiPin: z.boolean().optional(),
+    /** Which existing drops the collection settings apply to. */
+    scope: z.enum(["future_drops", "all_drops"]).default("future_drops"),
+});
+
+router.patch(
+    "/:id",
+    asyncHandler(async (req, res) => {
+        const parse = UpdateHotspotSchema.safeParse(req.body);
+        if (!parse.success) {
+            res.status(400).json({ error: parse.error.issues[0]?.message ?? "Invalid body" });
+            return;
+        }
+        const { creatorId, scope, ...input } = parse.data;
+        const hotspot = await db.hotspot.findFirst({
+            where: { id: req.params.id, creatorId, hidden: false },
+            select: {
+                id: true, isActive: true, createdAt: true, dropEveryDays: true, pinDurationDays: true,
+                hotspotStartDate: true, hotspotEndDate: true,
+                locationGroups: { where: { hidden: true }, select: { id: true, hidden: true, startDate: true, createdAt: true } },
+            },
+        });
+        if (!hotspot) { res.status(404).json({ error: "Hotspot not found" }); return; }
+
+        const now = new Date();
+        const pending = hotspot.locationGroups.find(isPendingFirstDrop) ?? null;
+        const start = input.hotspotStartDate ? new Date(input.hotspotStartDate) : hotspot.hotspotStartDate;
+        const end = input.hotspotEndDate ? new Date(input.hotspotEndDate) : hotspot.hotspotEndDate;
+        if (input.hotspotStartDate && !pending && start.getTime() !== hotspot.hotspotStartDate.getTime()) {
+            res.status(400).json({ error: "The hotspot has already started — its start date can't change." });
+            return;
+        }
+        if (input.hotspotStartDate && start < now) { res.status(400).json({ error: "The start date must be in the future." }); return; }
+        if (end <= start) { res.status(400).json({ error: "The end date must be after the start date." }); return; }
+
+        await db.hotspot.update({
+            where: { id: hotspot.id },
+            data: {
+                hotspotStartDate: start,
+                hotspotEndDate: end,
+                dropEveryDays: input.dropEveryDays,
+                pinDurationDays: input.pinDurationDays,
+                autoCollect: input.autoCollect,
+                multiPin: input.multiPin,
+            },
+        });
+
+        // The first drop is waiting for the start: keep it dated for the (new) start.
+        if (pending && (input.hotspotStartDate || input.pinDurationDays)) {
+            const duration = input.pinDurationDays ?? hotspot.pinDurationDays;
+            await db.locationGroup.update({
+                where: { id: pending.id },
+                data: { startDate: start, endDate: new Date(start.getTime() + duration * 86_400_000) },
+            });
+        }
+
+        // Collection settings cascade to existing drops in the chosen scope.
+        const groupScope = { hotspotId: hotspot.id, ...(scope === "future_drops" ? { startDate: { gte: now } } : {}) };
+        if (input.autoCollect !== undefined) {
+            await db.location.updateMany({ where: { locationGroup: groupScope }, data: { autoCollect: input.autoCollect } });
+        }
+        if (input.multiPin !== undefined) {
+            await db.locationGroup.updateMany({ where: groupScope, data: { multiPin: input.multiPin } });
+        }
+
+        // New timing → new cron job (only while it's running).
+        const timingChanged =
+            (input.dropEveryDays !== undefined && input.dropEveryDays !== hotspot.dropEveryDays) ||
+            start.getTime() !== hotspot.hotspotStartDate.getTime();
+        if (timingChanged && hotspot.isActive) {
+            hotspotScheduler.stop(hotspot.id);
+            // Keep the time of day drops have always fired at (same anchor as resume).
+            const anchor = pending ? start : hotspot.hotspotStartDate > hotspot.createdAt ? hotspot.hotspotStartDate : hotspot.createdAt;
+            hotspotScheduler.start(hotspot.id, creatorId, input.dropEveryDays ?? hotspot.dropEveryDays, anchor, pending ? start : undefined);
+        }
+
+        logger.info(`[hotspots] Updated hotspot=${hotspot.id} creator=${creatorId} timing=${timingChanged}`);
+        res.json({ ok: true, hotspotId: hotspot.id, rescheduled: timingChanged && hotspot.isActive });
+    })
+);
+
 // ─── DELETE /hotspots/:id ─────────────────────────────────────────────────────
 
 router.delete(
