@@ -15,8 +15,8 @@
 
 import cron from "node-cron";
 import cronParser from "cron-parser";
-import { db } from "./db.js";
-import { logger } from "./logger.js";
+import { db } from "./db";
+import { logger } from "./logger";
 import { dropPinsForHotspot, isPendingFirstDrop } from "./hotspot-drop";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -245,6 +245,6 @@ class HotspotScheduler {
 }
 
 // ─── Singleton export ─────────────────────────────────────────────────────────
-// Import this anywhere: `import { hotspotScheduler } from "../lib/hotspot-scheduler.js"`
+// Import this anywhere: `import { hotspotScheduler } from "../lib/hotspot-scheduler"`
 
 export const hotspotScheduler = new HotspotScheduler();

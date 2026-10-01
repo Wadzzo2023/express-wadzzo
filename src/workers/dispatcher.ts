@@ -1,10 +1,10 @@
 // src/workers/dispatcher.ts
 
-import type { Job } from "../types/index.js";
-import { markProcessing, markCompleted, markFailed, addLog, getJob } from "../lib/job-store.js";
-import { logger } from "../lib/logger.js";
-import { runAgentJob } from "./agent-worker.js";
-import { runCreatePinsJob } from "./create-pins-worker.js";
+import type { Job } from "../types/index";
+import { markProcessing, markCompleted, markFailed, addLog, getJob } from "../lib/job-store";
+import { logger } from "../lib/logger";
+import { runAgentJob } from "./agent-worker";
+import { runCreatePinsJob } from "./create-pins-worker";
 
 const MAX_CONCURRENT = parseInt(process.env.WORKER_CONCURRENCY ?? "5", 10);
 let running = 0;

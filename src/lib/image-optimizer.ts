@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import crypto from "crypto";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { s3Client } from "./s3.js";
+import { s3Client } from "./s3";
 
 function getAwsS3PublicUrl(key: string) {
     return `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${key}`;

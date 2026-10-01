@@ -10,8 +10,8 @@
 // Neither function mutates any data.
 
 import { ChatOpenAI } from "@langchain/openai";
-import { db } from "../lib/db.js";
-import type { PinIntent } from "./types.js";
+import { db } from "../lib/db";
+import type { PinIntent } from "./types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

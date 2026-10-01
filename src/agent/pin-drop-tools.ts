@@ -1,7 +1,7 @@
 import { tool } from "@langchain/core/tools";
 import { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
-import pLimit from "p-limit";
+import pLimit from "../lib/limit";
 import type { Pin, CityDiscoveryResult } from "./types";
 import { getCachedBounds, getCachedGeocode, getCachedPlaces, setCachedBounds, setCachedGeocode, setCachedPlaces } from "./geo-cache";
 import { logger } from "../lib/logger";

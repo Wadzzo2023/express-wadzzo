@@ -1,8 +1,8 @@
 
-import { resolveRoute, buildClarificationResponse } from "./classify-intent.js";
-import { logger } from "../lib/logger.js";
-import type { AgentRunInput, AgentRunOutput, PinIntent, Pin, PinOptions, AgentMode, MessageRole } from "./types.js";
-import { PinDropAgentInput, PinDropAgentOutput, runPinDropAgent } from "./pin-drop-agent.js";
+import { resolveRoute, buildClarificationResponse } from "./classify-intent";
+import { logger } from "../lib/logger";
+import type { AgentRunInput, AgentRunOutput, PinIntent, Pin, PinOptions, AgentMode, MessageRole } from "./types";
+import { PinDropAgentInput, PinDropAgentOutput, runPinDropAgent } from "./pin-drop-agent";
 import { CreatorAgentInput, runCreatorAgent } from "./pin-manage-agent";
 
 interface AgentRunPayload {

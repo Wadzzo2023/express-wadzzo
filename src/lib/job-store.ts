@@ -7,9 +7,9 @@
 // All mutations emit to the SSE broadcaster so callers get live updates.
 
 import { randomUUID } from "crypto";
-import type { Job, JobType, JobStatus, JobPayload, LogEntry, JobListQuery } from "../types/index.js";
-import { logger } from "./logger.js";
-import { sseBroadcast } from "../lib/sse.js";
+import type { Job, JobType, JobStatus, JobPayload, LogEntry, JobListQuery } from "../types/index";
+import { logger } from "./logger";
+import { sseBroadcast } from "../lib/sse";
 
 // ─── In-memory store ─────────────────────────────────────────────────────────
 

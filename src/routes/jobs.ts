@@ -6,11 +6,11 @@ import {
     getJob,
     listJobs,
     cancelJob,
-} from "../lib/job-store.js";
-import { sseSubscribe, sseClientCount } from "../lib/sse.js";
-import { enqueueJob } from "../workers/dispatcher.js";
-import type { AuthenticatedRequest } from "../middleware/auth.js";
-import { logger } from "../lib/logger.js";
+} from "../lib/job-store";
+import { sseSubscribe, sseClientCount } from "../lib/sse";
+import { enqueueJob } from "../workers/dispatcher";
+import type { AuthenticatedRequest } from "../middleware/auth";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 

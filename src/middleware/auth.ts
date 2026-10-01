@@ -8,7 +8,7 @@
 
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { logger } from "../lib/logger.js";
+import { logger } from "../lib/logger";
 
 const SECRET = process.env.NEXTAUTH_SECRET;
 if (!SECRET) {

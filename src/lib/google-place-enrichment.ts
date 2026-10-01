@@ -1,6 +1,6 @@
 // src/lib/google-place-enrichment.ts
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { s3Client } from "./s3.js"; // adjust path to your s3 module
+import { s3Client } from "./s3"; // adjust path to your s3 module
 
 import crypto from "crypto";
 

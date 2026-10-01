@@ -1,11 +1,11 @@
 // src/workers/agent-worker.ts
 // Runs the full agent pipeline directly — no HTTP call, no Next.js, no QStash.
 
-import type { Job } from "../types/index.js";
-import { addLog, setProgress } from "../lib/job-store.js";
-import { runAgentPipeline } from "../agent/run-pipeline.js";
-import type { AgentRunInput } from "../agent/types.js";
-import { logger } from "../lib/logger.js";
+import type { Job } from "../types/index";
+import { addLog, setProgress } from "../lib/job-store";
+import { runAgentPipeline } from "../agent/run-pipeline";
+import type { AgentRunInput } from "../agent/types";
+import { logger } from "../lib/logger";
 
 export async function runAgentJob(job: Job): Promise<unknown> {
     const payload = job.payload as AgentRunInput;

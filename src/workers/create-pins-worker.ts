@@ -1,12 +1,12 @@
 // src/workers/create-pins-worker.ts
-import type { Job } from "../types/index.js";
-import { db } from "../lib/db.js";
-import { randomLocation } from "../lib/map.js";
-import { logger } from "../lib/logger.js";
-import type { Pin, PinOptions } from "../agent/types.js";
-import { enrichPinFromGooglePlace } from "../lib/google-place-enrichment.js";
-import { createOptimizedImage } from "../lib/image-optimizer.js";
-import pLimit from "p-limit";
+import type { Job } from "../types/index";
+import { db } from "../lib/db";
+import { randomLocation } from "../lib/map";
+import { logger } from "../lib/logger";
+import type { Pin, PinOptions } from "../agent/types";
+import { enrichPinFromGooglePlace } from "../lib/google-place-enrichment";
+import { createOptimizedImage } from "../lib/image-optimizer";
+import pLimit from "../lib/limit";
 
 const ENRICHMENT_CONCURRENCY = 5;
 const DB_WRITE_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY ?? "5", 10);
