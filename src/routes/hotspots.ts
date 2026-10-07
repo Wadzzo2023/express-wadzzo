@@ -101,9 +101,12 @@ router.post(
         const firstDropStart = startsLater ? hotspotStartDate : now;
         const firstDropEnd = new Date(firstDropStart.getTime() + input.pinDurationDays * 86_400_000);
 
+        // Hotspots and their drops live on their brand's white-label platform.
+        const { platformId } = await db.creator.findUniqueOrThrow({ where: { id: creatorId }, select: { platformId: true } });
         const hotspot = await db.hotspot.create({
             data: {
                 creatorId,
+                platformId,
                 autoCollect: input.autoCollect,
                 dropEveryDays: input.dropEveryDays,
                 pinDurationDays: input.pinDurationDays,
@@ -115,6 +118,7 @@ router.post(
                 locationGroups: {
                     create: {
                         creatorId,
+                        platformId,
                         title: input.title,
                         description: input.description,
                         image: input.image,

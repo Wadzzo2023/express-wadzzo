@@ -109,6 +109,8 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
 
     // ── pre-create all tags once, reuse IDs for every pin ──
     const tagRecords = await preCreateTags(creatorId, jobTags);
+    // Pins live on their brand's white-label platform.
+    const { platformId } = await db.creator.findUniqueOrThrow({ where: { id: creatorId }, select: { platformId: true } });
     const tagIds = tagRecords.map((t) => t.id);
 
     const log: { title: string; status: string; error?: string }[] = [];
@@ -133,6 +135,7 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
         const locationGroup = await db.locationGroup.create({
             data: {
                 creatorId,
+                platformId,
                 title: base.title,
                 description: base.description,
                 startDate: new Date(base.startDate),
@@ -186,6 +189,7 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
                         const locationGroup = await db.locationGroup.create({
                             data: {
                                 creatorId,
+                                platformId,
                                 title: pin.title,
                                 description: pin.description,
                                 startDate: new Date(pin.startDate),

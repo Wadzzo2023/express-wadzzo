@@ -162,6 +162,7 @@ export async function dropPinsForHotspot(
         data: {
             hotspotId: hotspot.id,
             creatorId: lastGroup.creatorId,
+            platformId: hotspot.platformId,
             title: lastGroup.title,
             description: lastGroup.description,
             image: lastGroup.image,

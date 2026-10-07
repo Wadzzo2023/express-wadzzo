@@ -98,8 +98,12 @@ model Subscription {
     posts         Post[]
     assets        Asset[]
     LocationGroup LocationGroup[]
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
 
     @@unique([name, creatorId])
+    @@index([platformId])
 }
 
 model Like {
@@ -229,8 +233,12 @@ model Creator {
     locationGroupJobs  LocationGroupJob[]
     agentJobs          AgentJob[]
     locationTags       LocationTag[]
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
 
     @@index([bio, name])
+    @@index([platformId])
 }
 
 model VanitySubscription {
@@ -262,8 +270,12 @@ model Post {
     likes          Like[]
     comments       Comment[]
     medias         Media[]
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
 
     @@index([heading])
+    @@index([platformId])
 }
 
 // Necessary for Next auth
@@ -331,6 +343,10 @@ model User {
     RedeemConsumer RedeemConsumer[]
 
     QRItem QRItem[]
+    // platform the user first signed up on; every platform joined is in UserPlatform
+    signupPlatformId String         @default("wadzzo")
+    signupPlatform   Platform       @relation("SignupPlatform", fields: [signupPlatformId], references: [id])
+    platforms        UserPlatform[]
 }
 
 model VerificationToken {
@@ -425,9 +441,13 @@ model Asset {
     marketItems   MarketAsset[]
     LocationGroup LocationGroup[]
     Redeem        Redeem[]
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
 
     @@unique([code, issuer])
     @@index([name, description])
+    @@index([platformId])
 }
 
 // this will eliminate asset buy modal overhead.
@@ -456,8 +476,12 @@ model MarketAsset {
 
     placerId String? // admin placing this assets
     placer   Creator? @relation(fields: [placerId], references: [id], onDelete: Cascade)
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
 
     @@unique([assetId, placerId])
+    @@index([platformId])
 }
 
 model SellPageAsset {
@@ -525,6 +549,10 @@ model Admin {
 
     user       User         @relation(fields: [id], references: [id], onDelete: Cascade)
     AdminAsset AdminAsset[]
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
+    @@index([platformId])
 }
 
 // ------------------------Mapping SCHEMA-------------------------
@@ -555,6 +583,10 @@ model Hotspot {
     updatedAt        DateTime @updatedAt
 
     locationGroups LocationGroup[]
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
+    @@index([platformId])
 }
 
 model LocationTag {
@@ -629,6 +661,10 @@ model LocationGroup {
     hotspot           Hotspot?           @relation(fields: [hotspotId], references: [id])
     hotspotId         String?
     locationGroupTags LocationGroupTag[]
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
+    @@index([platformId])
 }
 
 model Location {
@@ -663,6 +699,10 @@ model LocationConsumer {
     hidden Boolean @default(false)
 
     createdAt DateTime @default(now())
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
+    @@index([platformId])
 }
 
 model Bounty {
@@ -688,8 +728,12 @@ model Bounty {
     BountyWinner       BountyWinner[]
     User               User?               @relation(fields: [userId], references: [id])
     userId             String?
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
 
     @@index([title, description])
+    @@index([platformId])
 }
 
 model BountyWinner {
@@ -740,8 +784,12 @@ model BountyParticipant {
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
     joinedAt DateTime @default(now())
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
 
     @@unique([bountyId, userId])
+    @@index([platformId])
 }
 
 model BountySubmission {
@@ -805,6 +853,10 @@ model Redeem {
     redeemConsumers RedeemConsumer[]
     assetRedeemId   Int
     assetRedeem     Asset            @relation(fields: [assetRedeemId], references: [id], onDelete: Cascade)
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
+    @@index([platformId])
 }
 
 model RedeemConsumer {
@@ -832,8 +884,12 @@ model QRItem {
     // Relations
     creator      User            @relation(fields: [creatorId], references: [id], onDelete: Cascade)
     descriptions QRDescription[]
+    // white-label platform this row belongs to (see model Platform)
+    platformId String   @default("wadzzo")
+    platform   Platform @relation(fields: [platformId], references: [id])
 
     @@unique([id, creatorId])
+    @@index([platformId])
 }
 
 model QRDescription {
@@ -926,4 +982,71 @@ model GeoCache {
     value     String   @db.Text
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
+}
+
+// ------------------------PLATFORM (white-label) SCHEMA-------------------------
+
+/// A white-label deployment sharing this database (wadzzo, clintoncounty, ...).
+/// `id` is the slug and must equal the deployment's PLATFORM_SLUG env.
+/// The root platform (wadzzo) sees and manages every platform's data.
+model Platform {
+    id          String   @id // slug, e.g. "wadzzo", "clintoncounty"
+    name        String
+    isRoot      Boolean  @default(false)
+    webUrl      String // e.g. https://web.clintoncounty-ia.gov
+    brandUrl    String // e.g. https://brand.clintoncounty-ia.gov
+    assetCode   String?
+    assetIssuer String?
+    active      Boolean  @default(true)
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    signups            User[]         @relation("SignupPlatform")
+    members            UserPlatform[]
+    auditLogs          AuditLog[]
+    creators           Creator[]
+    locationGroups     LocationGroup[]
+    locationConsumers  LocationConsumer[]
+    hotspots           Hotspot[]
+    bounties           Bounty[]
+    bountyParticipants BountyParticipant[]
+    assets             Asset[]
+    marketAssets       MarketAsset[]
+    posts              Post[]
+    subscriptions      Subscription[]
+    qrItems            QRItem[]
+    redeems            Redeem[]
+    admins             Admin[]
+}
+
+/// History of every platform a user has used (first and last seen).
+model UserPlatform {
+    userId       String
+    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    platformId   String
+    platform     Platform @relation(fields: [platformId], references: [id])
+    signUpMethod String?
+    firstSeenAt  DateTime @default(now())
+    lastSeenAt   DateTime @default(now())
+
+    @@id([userId, platformId])
+    @@index([platformId, firstSeenAt])
+}
+
+/// Who did what, from which platform. Admin actions, signups, platform joins.
+model AuditLog {
+    id               String   @id @default(cuid())
+    platformId       String // platform the request came from
+    platform         Platform @relation(fields: [platformId], references: [id])
+    actorId          String? // user id; no FK so the log outlives the user
+    action           String // e.g. "brand.approve", "pin.hide", "admin.add", "user.signup"
+    entityType       String
+    entityId         String
+    targetPlatformId String? // platform of the affected row, when it differs (root acting on a sub-platform)
+    meta             Json?
+    createdAt        DateTime @default(now())
+
+    @@index([platformId, createdAt])
+    @@index([entityType, entityId])
+    @@index([actorId])
 }
