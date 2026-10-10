@@ -6,7 +6,7 @@ import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 
 import { logger } from "./lib/logger";
-import { authenticate } from "./middleware/auth";
+import { requireTaskSecret } from "./middleware/auth";
 import { pruneOldJobs } from "./lib/job-store";
 import { hotspotScheduler } from "./lib/hotspot-scheduler";
 import jobsRouter from "./routes/jobs";
@@ -25,8 +25,10 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "")
     .map((s) => s.trim())
     .filter(Boolean);
 
+// Only the brand app's server calls us, so browsers get no CORS access unless
+// ALLOWED_ORIGINS names them explicitly.
 const corsMw = cors({
-    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
+    origin: allowedOrigins.length > 0 ? allowedOrigins : false,
     credentials: true,
     methods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -56,8 +58,8 @@ app.use("/hotspots", limiter);
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/health", healthRouter);
-app.use("/jobs", jobsRouter);
-app.use("/hotspots", hotspotsRouter); // internal-only — no auth, creatorId comes from request body
+app.use("/jobs", requireTaskSecret, jobsRouter);
+app.use("/hotspots", requireTaskSecret, hotspotsRouter); // creatorId comes from the brand app, which checked it
 
 // 404
 app.use((_req, res) => {
@@ -116,9 +118,6 @@ const server = app.listen(PORT, () => {
     logger.info(`  SSE:        http://localhost:${PORT}/jobs/:id/stream`);
     logger.info(`  Hotspots:   http://localhost:${PORT}/hotspots`);
 
-    if (!process.env.NEXTAUTH_SECRET) {
-        logger.warn("  NEXTAUTH_SECRET not set — authentication is disabled");
-    }
 
     // ── Restore all active hotspot schedules from DB ────────────────────────
     // Must run after listen() so the event loop is ready for cron ticks.

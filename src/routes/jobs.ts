@@ -9,15 +9,16 @@ import {
 } from "../lib/job-store";
 import { sseSubscribe, sseClientCount } from "../lib/sse";
 import { enqueueJob } from "../workers/dispatcher";
-import type { AuthenticatedRequest } from "../middleware/auth";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
 // ─── Validation schemas ───────────────────────────────────────────────────────
 
+const JOB_TYPES = ["agent_run", "create_pins", "generic"] as const;
+
 const EnqueueSchema = z.object({
-    type: z.enum(["agent_run", "generic"]),
+    type: z.enum(JOB_TYPES),
     creatorId: z.string().min(1),
     payload: z.record(z.unknown()),
     maxAttempts: z.number().int().min(1).max(5).optional(),
@@ -25,7 +26,7 @@ const EnqueueSchema = z.object({
 
 const ListQuerySchema = z.object({
     creatorId: z.string().optional(),
-    type: z.enum(["agent_run", "generic"]).optional(),
+    type: z.enum(JOB_TYPES).optional(),
     status: z.enum(["pending", "processing", "completed", "failed", "cancelled"]).optional(),
     limit: z.coerce.number().int().min(1).max(200).optional(),
     offset: z.coerce.number().int().min(0).optional(),
@@ -34,7 +35,7 @@ const ListQuerySchema = z.object({
 // ─── POST /jobs/enqueue ───────────────────────────────────────────────────────
 // Create and immediately dispatch a job. Returns { jobId } for polling.
 
-router.post("/enqueue", (req: AuthenticatedRequest, res) => {
+router.post("/enqueue", (req, res) => {
     const parse = EnqueueSchema.safeParse(req.body);
     if (!parse.success) {
         res.status(400).json({ error: "Invalid request body", details: parse.error.flatten() });
@@ -69,7 +70,7 @@ router.get("/:id", (req, res) => {
 // ─── GET /jobs ────────────────────────────────────────────────────────────────
 // List jobs with optional filters.
 
-router.get("/", (req: AuthenticatedRequest, res) => {
+router.get("/", (req, res) => {
     const parse = ListQuerySchema.safeParse(req.query);
     if (!parse.success) {
         res.status(400).json({ error: "Invalid query params", details: parse.error.flatten() });
@@ -87,7 +88,7 @@ router.get("/", (req: AuthenticatedRequest, res) => {
 
 // ─── POST /jobs/:id/cancel ────────────────────────────────────────────────────
 
-router.post("/:id/cancel", (req: AuthenticatedRequest, res) => {
+router.post("/:id/cancel", (req, res) => {
     const job = cancelJob(req.params.id);
     if (!job) {
         res.status(404).json({ error: "Job not found or cannot be cancelled" });
@@ -166,6 +167,7 @@ function serializeJob(job: ReturnType<typeof getJob>) {
         status: job.status,
         creatorId: job.creatorId,
         progress: job.progress ?? 0,
+        steps: job.steps ?? [],
         result: job.status === "completed" ? job.result : undefined,
         error: job.error,
         attempts: job.attempts,

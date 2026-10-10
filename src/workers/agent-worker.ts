@@ -1,28 +1,11 @@
-// src/workers/agent-worker.ts
-// Runs the full agent pipeline directly — no HTTP call, no Next.js, no QStash.
+// src/workers/agent-worker.ts — runs the map agent for one message (see src/agent/agent.ts).
 
 import type { Job } from "../types/index";
-import { addLog, setProgress } from "../lib/job-store";
-import { runAgentPipeline } from "../agent/run-pipeline";
-import type { AgentRunInput } from "../agent/types";
-import { logger } from "../lib/logger";
+import { runAgent, validatePayload } from "../agent/agent";
 
 export async function runAgentJob(job: Job): Promise<unknown> {
-    const payload = job.payload as AgentRunInput;
-
-    if (!payload.creatorId) throw new Error("Missing creatorId in job payload");
-    if (!payload.messages?.length) throw new Error("Missing messages in job payload");
-
-    addLog(job.id, { msg: `Running agent pipeline for creator ${payload.creatorId}`, level: "info" });
-    setProgress(job.id, 10);
-
-    logger.debug(`[agent-worker] job=${job.id} loadMore=${payload.loadMore ?? false} type=${payload.loadMoreType ?? "none"}`);
-
-    const result = await runAgentPipeline(payload);
-
-    setProgress(job.id, 100);
-    const r = result as Record<string, unknown>;
-    addLog(job.id, { msg: `Pipeline done — stage=${r.stage} mode=${r.mode ?? "pin_drop"}`, level: "info", });
-
-    return result;
+    const payload = validatePayload(job.payload);
+    // The job's owner and the payload must agree; the brand app sets both.
+    if (payload.creatorId !== job.creatorId) throw new Error("agent_run payload is for a different brand than the job");
+    return runAgent(job.id, payload);
 }

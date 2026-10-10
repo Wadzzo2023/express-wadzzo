@@ -3,7 +3,6 @@ import type { Job } from "../types/index";
 import { db } from "../lib/db";
 import { randomLocation } from "../lib/map";
 import { logger } from "../lib/logger";
-import type { Pin, PinOptions } from "../agent/types";
 import { enrichPinFromGooglePlace } from "../lib/google-place-enrichment";
 import { createOptimizedImage } from "../lib/image-optimizer";
 import pLimit from "../lib/limit";
@@ -11,6 +10,29 @@ import pLimit from "../lib/limit";
 const ENRICHMENT_CONCURRENCY = 5;
 const DB_WRITE_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY ?? "5", 10);
 const PROGRESS_UPDATE_INTERVAL = 5;
+
+/** One place to pin, as the brand app sends it after the person confirmed. */
+export interface Pin {
+    id: string;
+    type: string;
+    title: string;
+    description: string;
+    latitude: number;
+    longitude: number;
+    startDate: string;
+    endDate: string;
+    pinCollectionLimit: number;
+    radius: number;
+    url?: string;
+    image?: string;
+    gPlaceId?: string;
+}
+
+export interface PinOptions {
+    autoCollect: boolean;
+    groupingMode: "per-location" | "single-group";
+    pinNumber: number;
+}
 
 interface CreatePinsPayload {
     locationGroupJobId: string;
@@ -75,6 +97,8 @@ async function applyGooglePlaceEnrichment(pin: Pin): Promise<Pin> {
 export async function runCreatePinsJob(job: Job): Promise<unknown> {
     const { locationGroupJobId, creatorId, pins, pinOptions } =
         job.payload as unknown as CreatePinsPayload;
+    if (creatorId !== job.creatorId) throw new Error("create_pins payload is for a different brand than the job");
+    if (!pins?.length) throw new Error("create_pins needs at least one pin");
 
     await db.locationGroupJob.update({
         where: { id: locationGroupJobId },

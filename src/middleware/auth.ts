@@ -1,55 +1,43 @@
 // src/middleware/auth.ts
 //
-// Verifies the Bearer token sent by clients.
-// Strategy: sign a short-lived JWT with NEXTAUTH_SECRET on the client,
-// verify it here. This way any service that knows the secret can call us.
-//
-// Alternative simple mode: accept a raw static API key in X-Api-Key header.
+// Only the brand app's server may call this task server. It sends the shared
+// TASK_SERVER_SECRET in the X-Task-Secret header; anything else is rejected.
+// The brand app has already checked the user and which brand they act for, so
+// a request that passes here is trusted to carry the right creatorId.
 
+import { timingSafeEqual } from "crypto";
 import type { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
 import { logger } from "../lib/logger";
 
-const SECRET = process.env.NEXTAUTH_SECRET;
+const SECRET = process.env.TASK_SERVER_SECRET;
+const IS_PROD = process.env.NODE_ENV === "production";
+
 if (!SECRET) {
-    logger.warn("[auth] NEXTAUTH_SECRET is not set — all requests will be rejected");
+    logger.warn(
+        IS_PROD
+            ? "[auth] TASK_SERVER_SECRET is not set — every /jobs and /hotspots request will be rejected"
+            : "[auth] TASK_SERVER_SECRET is not set — requests are NOT checked (development only)",
+    );
 }
 
-export interface AuthenticatedRequest extends Request {
-    authPayload?: {
-        sub?: string;
-        creatorId?: string;
-        iat?: number;
-        exp?: number;
-    };
+function matches(given: string, expected: string): boolean {
+    const a = Buffer.from(given);
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function authenticate(
-    req: AuthenticatedRequest,
-    res: Response,
-    next: NextFunction
-): void {
-    // ── Option A: Bearer JWT ──────────────────────────────────────────────────
-    const authHeader = req.headers.authorization;
-    logger.info("[auth] Auth attempt, Authorization header present:", !!authHeader);
-    if (authHeader?.startsWith("Bearer ")) {
-        const token = authHeader.slice(7);
-        try {
-            if (!SECRET) throw new Error("No secret configured");
-            const payload = jwt.verify(token, SECRET) as AuthenticatedRequest["authPayload"];
-            req.authPayload = payload;
-            logger.debug("[auth] JWT verified successfully");
-            return next();
-        } catch (err) {
-            logger.debug(`[auth] JWT verify failed: ${err instanceof Error ? err.message : String(err)}`);
+export function requireTaskSecret(req: Request, res: Response, next: NextFunction): void {
+    if (!SECRET) {
+        if (IS_PROD) {
+            res.status(503).json({ error: "Task server is not configured" });
+            return;
         }
-    }
-
-    const apiKey = req.headers["x-api-key"];
-    if (apiKey && apiKey === SECRET) {
-        req.authPayload = { sub: "static-key" };
-        logger.debug("[auth] Static API key auth successful");
         return next();
     }
-    res.status(401).json({ error: "Unauthorized", hint: "Provide Authorization: Bearer <jwt> or X-Api-Key header" });
+
+    const given = req.headers["x-task-secret"];
+    if (typeof given === "string" && matches(given, SECRET)) return next();
+
+    logger.warn(`[auth] Rejected ${req.method} ${req.originalUrl} from ${req.ip}`);
+    res.status(401).json({ error: "Unauthorized" });
 }
