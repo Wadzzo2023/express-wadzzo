@@ -81,12 +81,12 @@ app.use(
 
 // ── Graceful error handling ───────────────────────────────────────────────────
 process.on("uncaughtException", (err) => {
-    logger.error("[process] Uncaught exception:", err.message, err.stack);
+    logger.error(`[process] Uncaught exception: ${err.message}\n${err.stack ?? ""}`);
 });
 
 process.on("unhandledRejection", (reason) => {
     const msg = reason instanceof Error ? reason.message : String(reason);
-    logger.error("[process] Unhandled rejection:", msg);
+    logger.error(`[process] Unhandled rejection: ${msg}`);
 });
 
 // ── Graceful shutdown ────────────────────────────────────────────────────────
