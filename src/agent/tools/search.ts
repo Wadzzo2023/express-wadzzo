@@ -103,12 +103,13 @@ export const searchTools = [
     defineTool({
         name: "search_web_list",
         description:
-            "Find locations from published lists on the web — art trails, historic markers, a sculptor's works, festival venues, " +
-            "anything Google Maps won't list as one category. Slower than search_places. Returns a ref.",
+            "Find locations from published lists on the web — an artist's works (e.g. Thomas Dambo trolls), art trails, historic markers, " +
+            "festival venues, a series or collection — anything Google Maps won't list as one category. Use this, not search_places, " +
+            "for a named collection. Worldwide lists are read region by region. Slower than search_places. Returns a ref.",
         schema: z.object({
             query: z.string().describe('e.g. "Thomas Dambo troll sculptures", "historic barn quilts"'),
             where: whereField,
-            limit: z.number().int().min(1).max(150).default(60),
+            limit: z.number().int().min(1).max(200).default(100).describe("Most locations (for 'all …' use 200)"),
         }),
         label: (a, run) => `Looking up ${a.query} on the web${a.where && ANYWHERE_WORDS.test(a.where) ? "" : ` (${areaName(run, a.where)})`}…`,
         run: async (a, run) => {

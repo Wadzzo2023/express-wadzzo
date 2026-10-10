@@ -83,13 +83,19 @@ type CachedPlace = { id: string; title: string; address?: string; lat: number; l
 /** One text search restricted to `box` (up to 60 results), cached per query + box. */
 async function searchBox(query: string, box: Box): Promise<CachedPlace[]> {
     const boxKey = [box.south, box.west, box.north, box.east].map((n) => n.toFixed(3)).join(",");
-    const places = await cached(cacheKey("v2", "places", query, boxKey), async () => {
+    // v3: earlier entries may hold only the first page (paging used to fail).
+    const places = await cached(cacheKey("v3", "places", query, boxKey), async () => {
         const found: CachedPlace[] = [];
         let pageToken: string | undefined;
         for (let page = 0; page < MAX_PER_SEARCH / 20; page++) {
-            const body: Record<string, unknown> = { textQuery: query, pageSize: 20, languageCode: "en" };
+            // Every page must repeat the first request exactly, plus its token.
+            const body: Record<string, unknown> = {
+                textQuery: query,
+                pageSize: 20,
+                languageCode: "en",
+                locationRestriction: { rectangle: { low: { latitude: box.south, longitude: box.west }, high: { latitude: box.north, longitude: box.east } } },
+            };
             if (pageToken) body.pageToken = pageToken;
-            else body.locationRestriction = { rectangle: { low: { latitude: box.south, longitude: box.west }, high: { latitude: box.north, longitude: box.east } } };
 
             const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
                 method: "POST",

@@ -50,16 +50,41 @@ async function askWeb(prompt: string): Promise<string> {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-/** Every physical location in a published list of `query`, placed with Google. */
-export async function searchWebList(query: string, where: string, limit: number): Promise<PlaceItem[]> {
+/**
+ * A worldwide list is looked up region by region: one web search asked for a
+ * whole world list stops early (7 of 100+ trolls); per region it reads each
+ * region's list in full.
+ */
+const WORLD_REGIONS = ["the United States", "Canada and Mexico", "Europe", "Asia", "Australia and New Zealand", "South America, Africa and the Middle East"];
+
+/** Named locations of `query` in one region, read from the web. */
+async function listFromWeb(query: string, where: string, limit: number): Promise<WebLocation[]> {
     const raw = await askWeb(
-        `Search the web for a complete list of: ${query}${where ? ` in ${where}` : ""}.\n` +
-            `Find list pages (official sites, Wikipedia, trail maps), not single-item pages.\n` +
-            `Return ONLY JSON: [{"name":"...","address":"street address if known","city":"...","country":"..."}]\n` +
-            `Include every location you find, up to ${limit}. No commentary.`,
-    );
+        `Search the web for the COMPLETE list of: ${query}${where ? ` in ${where}` : ""}.\n` +
+            `Prefer the official source (the artist's, organiser's or brand's own map or list page), then Wikipedia or trail maps; ` +
+            `open the list pages and read them in full rather than stopping at a few examples.\n` +
+            `Return ONLY JSON: [{"name":"...","address":"street address or park/site name if known","city":"...","country":"..."}]\n` +
+            `Include every location you find, up to ${limit}. Only list locations you actually read on a page — never guess or fill in. ` +
+            `Leave out anything removed or no longer standing. No commentary.`,
+    ).catch((err: unknown) => {
+        logger.warn(`[web] list "${query}" in "${where}" failed: ${err instanceof Error ? err.message : String(err)}`);
+        return "";
+    });
     const found = (parseJsonLoose<WebLocation[]>(raw) ?? []).filter((l) => l.name && (l.address || l.city));
     logger.info(`[web] list "${query}" in "${where}" → ${found.length} named locations`);
+    return found;
+}
+
+/** Every physical location in a published list of `query` ("" = worldwide), placed with Google. */
+export async function searchWebList(query: string, where: string, limit: number): Promise<PlaceItem[]> {
+    const lists = await Promise.all((where ? [where] : WORLD_REGIONS).map((region) => listFromWeb(query, region, limit)));
+    const seen = new Set<string>();
+    const found = lists.flat().filter((l) => {
+        const id = `${l.name}|${l.city ?? ""}`.toLowerCase().replace(/\s+/g, " ").trim();
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+    });
 
     const run = pLimit(6);
     const placed = await Promise.all(
@@ -73,7 +98,10 @@ export async function searchWebList(query: string, where: string, limit: number)
             }),
         ),
     );
-    return placed.filter((p): p is PlaceItem => p !== null);
+    // One place can be found under two names; keep it once.
+    const unique = new Map<string, PlaceItem>();
+    for (const p of placed) if (p && !unique.has(p.key)) unique.set(p.key, p);
+    return [...unique.values()];
 }
 
 /** Upcoming events for `query` in `where`, each placed at its venue. */
