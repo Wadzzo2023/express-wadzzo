@@ -9,7 +9,8 @@ import pLimit from "../lib/limit";
 
 const ENRICHMENT_CONCURRENCY = 5;
 const DB_WRITE_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY ?? "5", 10);
-const PROGRESS_UPDATE_INTERVAL = 5;
+/** Tagging is a nice-to-have: past this, pins are created without tags. */
+const TAGS_TIMEOUT_MS = 30_000;
 
 /** One place to pin, as the brand app sends it after the person confirmed. */
 export interface Pin {
@@ -94,7 +95,31 @@ async function applyGooglePlaceEnrichment(pin: Pin): Promise<Pin> {
     }
 }
 
+/**
+ * Marks the brand app's pin job failed (if it's still running), so its progress
+ * card stops waiting. Used when a create_pins job crashes or times out.
+ */
+export async function failPinJob(job: Job, reason: string): Promise<void> {
+    const { locationGroupJobId } = job.payload as { locationGroupJobId?: string };
+    if (!locationGroupJobId) return;
+    await db.locationGroupJob
+        .updateMany({
+            where: { id: locationGroupJobId, creatorId: job.creatorId, status: { in: ["pending", "processing"] } },
+            data: { status: "failed", error: reason },
+        })
+        .catch((err: unknown) => logger.warn(`[create-pins-worker] couldn't mark ${locationGroupJobId} failed: ${String(err)}`));
+}
+
 export async function runCreatePinsJob(job: Job): Promise<unknown> {
+    try {
+        return await createPins(job);
+    } catch (err) {
+        await failPinJob(job, err instanceof Error ? err.message : String(err));
+        throw err;
+    }
+}
+
+async function createPins(job: Job): Promise<unknown> {
     const { locationGroupJobId, creatorId, pins, pinOptions } =
         job.payload as unknown as CreatePinsPayload;
     if (creatorId !== job.creatorId) throw new Error("create_pins payload is for a different brand than the job");
@@ -106,7 +131,7 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
     });
 
     // ── generate tags ONCE from the first pin ──
-    const firstPin = pins[0];
+    const firstPin = pins[0]!;
     let jobTags: string[] = [];
 
     const dbCached = await db.locationTagCache.findUnique({
@@ -118,7 +143,10 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
         jobTags = dbCached.tags;
     } else {
         logger.info(`[tags] generating from first pin: "${firstPin.title}"`);
-        jobTags = await callOpenAI(firstPin);
+        jobTags = await callOpenAI(firstPin).catch((err: unknown) => {
+            logger.warn(`[tags] skipped for "${firstPin.title}": ${err instanceof Error ? err.message : String(err)}`);
+            return [] as string[];
+        });
 
         await db.locationTagCache.upsert({
             where: { title: firstPin.title },
@@ -141,7 +169,7 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
     let completed = 0;
 
     if (pinOptions.groupingMode === "single-group") {
-        const base = await applyGooglePlaceEnrichment(pins[0]);
+        const base = await applyGooglePlaceEnrichment(firstPin);
 
         const allLocations = pins.map((p) => {
             const loc = randomLocation(p.latitude, p.longitude, p.radius ?? 2);
@@ -241,16 +269,11 @@ export async function runCreatePinsJob(job: Job): Promise<unknown> {
                         logger.warn(`[create-pins-worker] Failed pin "${pin.title}": ${msg}`);
                     }
 
-                    if (completed % PROGRESS_UPDATE_INTERVAL === 0 || completed === pins.length) {
-                        await db.locationGroupJob.update({
-                            where: { id: locationGroupJobId },
-                            data: {
-                                completed,
-                                log: log.filter(Boolean),
-                                status: completed === pins.length ? "completed" : "processing",
-                            },
-                        });
-                    }
+                    // Progress after every pin, so the brand app's count moves.
+                    await db.locationGroupJob.update({
+                        where: { id: locationGroupJobId },
+                        data: { completed, log: log.filter(Boolean) },
+                    });
                 })
             )
         );
@@ -299,7 +322,7 @@ async function callOpenAI(pin: {
     try {
         const geoRes = await fetch(
             `https://nominatim.openstreetmap.org/reverse?lat=${pin.latitude}&lon=${pin.longitude}&format=json&addressdetails=1&zoom=16`,
-            { headers: { "User-Agent": "WadzzoApp/1.0" } }
+            { headers: { "User-Agent": "WadzzoApp/1.0" }, signal: AbortSignal.timeout(8_000) }
         );
         const geoData = await geoRes.json() as {
             address?: { amenity?: string; leisure?: string; tourism?: string; neighbourhood?: string; suburb?: string }
@@ -312,6 +335,7 @@ async function callOpenAI(pin: {
     const response = await fetch("https://api.openai.com/v1/responses", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+        signal: AbortSignal.timeout(TAGS_TIMEOUT_MS),
         body: JSON.stringify({
             model: "gpt-4o",
             tools: [{ type: "web_search_preview" }],

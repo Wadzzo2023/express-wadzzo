@@ -27,6 +27,7 @@ async function fetchGooglePlaceDetails(gPlaceId: string): Promise<{
 
     const res = await fetch(url, {
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {
@@ -64,7 +65,7 @@ function buildPlacePhotoUrl(photoName: string, maxWidth = 1200): string {
  */
 async function uploadImageFromUrlToS3(sourceUrl: string): Promise<string> {
     // 1. Fetch the image bytes
-    const imageRes = await fetch(sourceUrl);
+    const imageRes = await fetch(sourceUrl, { signal: AbortSignal.timeout(15_000) });
     if (!imageRes.ok) {
         throw new Error(
             `Failed to fetch image from Google (${imageRes.status}): ${sourceUrl}`
@@ -115,6 +116,7 @@ export async function enrichPinFromGooglePlace(
         // Google returns a JSON wrapper when skipHttpRedirect=true
         const mediaRes = await fetch(photoMediaUrl, {
             headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(10_000),
         });
         if (!mediaRes.ok) {
             throw new Error(

@@ -4,7 +4,7 @@ import type { Job } from "../types/index";
 import { markProcessing, markCompleted, markFailed, addLog, getJob } from "../lib/job-store";
 import { logger } from "../lib/logger";
 import { runAgentJob } from "./agent-worker";
-import { runCreatePinsJob } from "./create-pins-worker";
+import { failPinJob, runCreatePinsJob } from "./create-pins-worker";
 
 const MAX_CONCURRENT = parseInt(process.env.WORKER_CONCURRENCY ?? "5", 10);
 let running = 0;
@@ -72,6 +72,8 @@ export async function enqueueJob(job: Job): Promise<void> {
             setTimeout(() => void enqueueJob(job), delay);
         } else {
             markFailed(job.id, msg);
+            // A timeout leaves the brand app's pin job "processing" otherwise.
+            if (job.type === "create_pins") await failPinJob(job, msg);
         }
     } finally {
         releaseSlot();

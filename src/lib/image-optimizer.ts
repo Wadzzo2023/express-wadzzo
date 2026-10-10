@@ -8,7 +8,7 @@ function getAwsS3PublicUrl(key: string) {
 }
 
 export async function createOptimizedImage(sourceUrl: string): Promise<string> {
-    const response = await fetch(sourceUrl);
+    const response = await fetch(sourceUrl, { signal: AbortSignal.timeout(15_000) });
     if (!response.ok) {
         throw new Error(`Failed to fetch image from ${sourceUrl}`);
     }
