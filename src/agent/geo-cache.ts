@@ -4,14 +4,22 @@
 // search costs no API calls. Places and geocodes are public data, never
 // anything brand-specific.
 
+import { createHash } from "crypto";
+
 import { db } from "../lib/db";
 
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 type Entry<T> = { value: T; cachedAt: number };
 
+/**
+ * A readable key, plus a hash of the exact text so names that differ only in
+ * characters the readable part drops (Bangla, accents…) never share an entry.
+ */
 export function cacheKey(...parts: (string | number)[]): string {
-    return parts.map((p) => String(p).toLowerCase().trim().replace(/\s+/g, "_").replace(/[^a-z0-9_.,:-]/g, "")).join(":");
+    const text = parts.map((p) => String(p).toLowerCase().trim().replace(/\s+/g, " ")).join(":");
+    const readable = text.replace(/ /g, "_").replace(/[^a-z0-9_.,:-]/g, "").slice(0, 150);
+    return `${readable}#${createHash("sha256").update(text).digest("hex").slice(0, 16)}`;
 }
 
 /** Cached value for `key`, loading (and storing) it when missing or older than `ttlMs`. */

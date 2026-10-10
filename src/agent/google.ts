@@ -9,6 +9,7 @@ import pLimit from "../lib/limit";
 import type { PlaceItem } from "./contract";
 import { boxSpanKm, tiles, type Box } from "./area";
 import { cached, cacheKey } from "./geo-cache";
+import { geocodeOsm } from "./osm";
 
 const API_KEY = () => {
     const key = process.env.GOOGLE_MAP_API_KEY;
@@ -35,28 +36,37 @@ type GeocodeResponse = {
 
 export type Geocoded = { name: string; lat: number; lng: number; box: Box };
 
-/** Where a place name is: its point and its extent (a city's bounds, a venue's viewport). */
+/**
+ * Where a place name is: its point and its extent (a city's bounds, a venue's
+ * viewport). Google first; OpenStreetMap when Google can't place it (or its key
+ * isn't allowed to geocode).
+ */
 export function geocode(address: string): Promise<Geocoded | null> {
     const text = address.trim();
     if (!text) return Promise.resolve(null);
-    return cached(cacheKey("v2", "geocode", text), async () => {
-        const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
-        url.searchParams.set("address", text);
-        url.searchParams.set("key", API_KEY());
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        const data = (await res.json()) as GeocodeResponse;
-        const hit = data.results?.[0];
-        const loc = hit?.geometry?.location;
-        if (data.status !== "OK" || !loc) {
-            logger.warn(`[google] geocode "${text}" → ${data.status}`);
-            return null;
-        }
-        const b = hit.geometry?.bounds ?? hit.geometry?.viewport;
-        const box: Box = b
-            ? { south: b.southwest.lat, west: b.southwest.lng, north: b.northeast.lat, east: b.northeast.lng }
-            : { south: loc.lat - 0.05, north: loc.lat + 0.05, west: loc.lng - 0.05, east: loc.lng + 0.05 };
-        return { name: hit.formatted_address ?? text, lat: loc.lat, lng: loc.lng, box };
-    });
+    return cached(cacheKey("v3", "geocode", text), async () => (await geocodeGoogle(text)) ?? geocodeOsm(text));
+}
+
+async function geocodeGoogle(text: string): Promise<Geocoded | null> {
+    const key = process.env.GOOGLE_MAP_API_KEY;
+    if (!key) return null;
+    const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    url.searchParams.set("address", text);
+    url.searchParams.set("key", key);
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+    if (!res) return null;
+    const data = (await res.json()) as GeocodeResponse & { error_message?: string };
+    const hit = data.results?.[0];
+    const loc = hit?.geometry?.location;
+    if (data.status !== "OK" || !loc) {
+        logger.warn(`[google] geocode "${text}" → ${data.status}${data.error_message ? ` (${data.error_message})` : ""}`);
+        return null;
+    }
+    const b = hit.geometry?.bounds ?? hit.geometry?.viewport;
+    const box: Box = b
+        ? { south: b.southwest.lat, west: b.southwest.lng, north: b.northeast.lat, east: b.northeast.lng }
+        : { south: loc.lat - 0.05, north: loc.lat + 0.05, west: loc.lng - 0.05, east: loc.lng + 0.05 };
+    return { name: hit.formatted_address ?? text, lat: loc.lat, lng: loc.lng, box };
 }
 
 // ─── Places text search ──────────────────────────────────────────────────────
