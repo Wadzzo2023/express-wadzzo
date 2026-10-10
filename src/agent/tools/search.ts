@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import type { PlaceItem } from "../contract";
-import { inArea, metresBetween, type SearchArea } from "../area";
+import { inArea, metresBetween, searchBoxes, type SearchArea } from "../area";
 import { geocode, searchPlaces } from "../google";
 import type { Run } from "../run";
 import { searchEvents, searchWebList } from "../web";
@@ -89,7 +89,11 @@ export const searchTools = [
         run: async (a, run) => {
             const area = (await resolveArea(run, a.where))!;
             // Search the area's box, then keep what's really inside the home-area polygon.
-            const raw = await searchPlaces(a.query, area.box, area.ring ? Math.min(200, a.limit * 2) : a.limit);
+            // (An outline in several parts is searched part by part.)
+            const want = area.rings ? Math.min(200, a.limit * 2) : a.limit;
+            const boxes = searchBoxes(area);
+            const found = (await Promise.all(boxes.map((box) => searchPlaces(a.query, box, Math.ceil(want / boxes.length))))).flat();
+            const raw = found.filter((p, i) => found.findIndex((q) => q.key === p.key) === i);
             const items = await flagPinned(run, raw.filter((p) => inArea(area, p.lat, p.lng)).slice(0, a.limit));
             const ref = run.addResult({ kind: "places", title: `${a.query} in ${area.name}`, items, area: area.name });
             return { model: placesForModel(ref, items, area.name), detail: foundDetail(items, "place") };

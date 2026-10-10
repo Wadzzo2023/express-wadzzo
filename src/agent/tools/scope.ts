@@ -70,7 +70,7 @@ export async function findPins(creatorId: string, filter: PinFilter): Promise<{ 
         where,
         orderBy: { createdAt: "desc" },
         // A polygon area is filtered after the box query, so fetch a little extra.
-        take: filter.area?.ring ? filter.limit * 3 : filter.limit,
+        take: filter.area?.rings ? filter.limit * 3 : filter.limit,
         select: {
             id: true,
             title: true,
@@ -86,7 +86,7 @@ export async function findPins(creatorId: string, filter: PinFilter): Promise<{ 
         },
     });
     const inside = filter.area ? rows.filter((r) => inArea(filter.area!, r.latitude, r.longitude)) : rows;
-    const total = filter.area?.ring ? inside.length : await db.locationGroup.count({ where });
+    const total = filter.area?.rings ? inside.length : await db.locationGroup.count({ where });
 
     return {
         total,

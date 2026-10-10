@@ -1,22 +1,30 @@
 // src/agent/area.ts
 //
-// Search areas. A brand's home area is stored like a hotspot: a GeoJSON polygon
-// Feature whose ring points are [lat, lng] (the brand app's map-kit format).
-// Named places ("Davenport, IA") are turned into a box by geocoding.
+// Search areas. A brand's home area is stored in the brand app's map-kit format:
+// a drawn Polygon, or a looked-up place's MultiPolygon (one outer ring per part,
+// e.g. a country's islands), with ring points as [lat, lng]. Named places
+// ("Davenport, IA") are turned into a box by geocoding.
 
 export type Box = { south: number; west: number; north: number; east: number };
 
-/** An area to search in, with the polygon when there is one (home areas). */
-export type SearchArea = { name: string; box: Box; ring?: [number, number][] };
+export type Ring = [number, number][];
 
-type StoredFeature = { geometry?: { coordinates?: number[][][] } } | null | undefined;
+/** An area to search in, with its outline's parts when there is one (home areas). */
+export type SearchArea = { name: string; box: Box; rings?: Ring[] };
 
-/** The outer ring of a stored feature as [lat, lng] pairs, if it has one. */
-export function ringOf(feature: unknown): [number, number][] | null {
-    const ring = (feature as StoredFeature)?.geometry?.coordinates?.[0];
-    if (!Array.isArray(ring) || ring.length < 4) return null;
+type StoredFeature = { geometry?: { type?: string; coordinates?: unknown } } | null | undefined;
+
+function cleanRing(ring: unknown): Ring | null {
+    if (!Array.isArray(ring)) return null;
     const points = ring.filter((p): p is [number, number] => Array.isArray(p) && p.length >= 2 && p.every((n) => typeof n === "number"));
     return points.length >= 4 ? points.map(([lat, lng]) => [lat, lng]) : null;
+}
+
+/** The outer ring of every part of a stored feature, as [lat, lng] pairs. */
+export function ringsOf(feature: unknown): Ring[] {
+    const g = (feature as StoredFeature)?.geometry;
+    const outer = g?.type === "MultiPolygon" && Array.isArray(g.coordinates) ? g.coordinates.map((p: unknown) => (Array.isArray(p) ? p[0] : null)) : [Array.isArray(g?.coordinates) ? g.coordinates[0] : null];
+    return outer.map(cleanRing).filter((r): r is Ring => r !== null);
 }
 
 export function boxOfRing(ring: [number, number][]): Box {
@@ -25,9 +33,32 @@ export function boxOfRing(ring: [number, number][]): Box {
     return { south: Math.min(...lats), north: Math.max(...lats), west: Math.min(...lngs), east: Math.max(...lngs) };
 }
 
+function unionBox(boxes: Box[]): Box {
+    return {
+        south: Math.min(...boxes.map((b) => b.south)),
+        north: Math.max(...boxes.map((b) => b.north)),
+        west: Math.min(...boxes.map((b) => b.west)),
+        east: Math.max(...boxes.map((b) => b.east)),
+    };
+}
+
 export function areaFromFeature(name: string, feature: unknown): SearchArea | null {
-    const ring = ringOf(feature);
-    return ring ? { name, box: boxOfRing(ring), ring } : null;
+    const rings = ringsOf(feature);
+    return rings.length ? { name, box: unionBox(rings.map(boxOfRing)), rings } : null;
+}
+
+const boxSize = (b: Box) => (b.north - b.south) * (b.east - b.west);
+
+/**
+ * Boxes to search for places in an area: its own box, or for an outline in
+ * several parts, the boxes of its biggest parts (at most 3; parts under 5% of
+ * the biggest are skipped). The USA → the mainland and Alaska, not one box
+ * spanning the globe.
+ */
+export function searchBoxes(area: SearchArea): Box[] {
+    if (!area.rings || area.rings.length < 2) return [area.box];
+    const boxes = area.rings.map(boxOfRing).sort((a, b) => boxSize(b) - boxSize(a));
+    return boxes.filter((b) => boxSize(b) >= boxSize(boxes[0]!) * 0.05).slice(0, 3);
 }
 
 /** Ray casting on [lat, lng] points. */
@@ -44,7 +75,7 @@ export function inRing(ring: [number, number][], lat: number, lng: number): bool
 export function inArea(area: SearchArea, lat: number, lng: number): boolean {
     const { box } = area;
     if (lat < box.south || lat > box.north || lng < box.west || lng > box.east) return false;
-    return area.ring ? inRing(area.ring, lat, lng) : true;
+    return area.rings ? area.rings.some((r) => inRing(r, lat, lng)) : true;
 }
 
 /** Splits a box into an n×n grid, to search big areas tile by tile. */
