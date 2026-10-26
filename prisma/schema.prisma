@@ -264,6 +264,7 @@ model Creator {
     postGroups          PostGroup[]
     hotspots            Hotspot[]
     agentJobs           AgentJob[]
+    agentConversations  AgentConversation[]
     locationGroupJobs   LocationGroupJob[]
     locationTags        LocationTag[]
 
@@ -1366,6 +1367,54 @@ model AgentJob {
     updatedAt DateTime @updatedAt
 
     @@index([creatorId, createdAt])
+}
+
+model AgentConversation {
+    id        String  @id @default(cuid())
+    creatorId String
+    creator   Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+    userId    String // who is chatting: the artist itself, or an admin acting for it
+    title     String
+
+    messages AgentMessage[]
+    actions  AgentAction[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([creatorId, userId, updatedAt])
+}
+
+model AgentMessage {
+    id             String            @id @default(cuid())
+    conversationId String
+    conversation   AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+    role   String // "user" | "assistant"
+    text   String @db.Text
+    blocks Json   @default("[]") // cards shown with the message (AgentBlock[])
+    steps  Json   @default("[]") // what the agent did while answering (AgentStep[])
+
+    createdAt DateTime @default(now())
+
+    @@index([conversationId, createdAt])
+}
+
+model AgentAction {
+    id             String            @id @default(cuid())
+    conversationId String
+    conversation   AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+    creatorId      String
+
+    type    String
+    payload Json
+    status  String @default("pending") // pending | running | done | failed | cancelled
+    result  Json?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([conversationId])
 }
 
 model LocationGroupJob {

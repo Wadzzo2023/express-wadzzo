@@ -9,9 +9,9 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
-import { db } from "./db.js";
-import { generateRandomLocations } from "../lib/map.js";
-import { logger } from "./logger.js";
+import { db } from "./db";
+import { generateRandomLocations } from "../lib/map";
+import { logger } from "./logger";
 import type * as GeoJSON from "geojson";
 
 // ─── Return shapes ────────────────────────────────────────────────────────────

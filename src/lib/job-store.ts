@@ -7,9 +7,10 @@
 // All mutations emit to the SSE broadcaster so callers get live updates.
 
 import { randomUUID } from "crypto";
-import type { Job, JobType, JobStatus, JobPayload, LogEntry, JobListQuery } from "../types/index.js";
-import { logger } from "./logger.js";
-import { sseBroadcast } from "../lib/sse.js";
+import type { Job, JobType, JobStatus, JobPayload, LogEntry, JobListQuery } from "../types/index";
+import type { AgentStep } from "../agent/contract";
+import { logger } from "./logger";
+import { sseBroadcast } from "../lib/sse";
 
 // ─── In-memory store ─────────────────────────────────────────────────────────
 
@@ -101,6 +102,13 @@ export function addLog(id: string, entry: Omit<LogEntry, "ts">): void {
         log: full,
     });
     jobs.set(job.id, job);
+}
+
+export function setSteps(id: string, steps: AgentStep[]): void {
+    const job = jobs.get(id);
+    if (!job) return;
+    job.steps = steps;
+    touch(job);
 }
 
 export function setProgress(id: string, progress: number): void {

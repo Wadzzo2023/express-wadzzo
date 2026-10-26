@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { fullArgs, previewArgs, previewWindow, stemArgs, streamKeys } from "./transcode.js";
+import { fullArgs, previewArgs, previewWindow, stemArgs, streamKeys } from "./transcode";
 
 test("preview window starts where the creator chose", () => {
     assert.deepEqual(previewWindow(240, 60), { start: 60, length: 30 });

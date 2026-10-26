@@ -7,16 +7,16 @@ import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import { WebSocketServer } from "ws";
 
-import { logger } from "./lib/logger.js";
-import { authenticate } from "./middleware/auth.js";
-import { pruneOldJobs } from "./lib/job-store.js";
-import { hotspotScheduler } from "./lib/hotspot-scheduler.js";
-import { startKeepAliveScheduler } from "./lib/keep-alive-scheduler.js";
-import jobsRouter from "./routes/jobs.js";
-import healthRouter from "./routes/health.js";
-import hotspotsRouter from "./routes/hotspots.js";
-import musicRouter, { handleMusicWebSocket } from "./routes/music.js";
-import mediaRouter from "./routes/media.js";
+import { logger } from "./lib/logger";
+import { authenticate } from "./middleware/auth";
+import { pruneOldJobs } from "./lib/job-store";
+import { hotspotScheduler } from "./lib/hotspot-scheduler";
+import { startKeepAliveScheduler } from "./lib/keep-alive-scheduler";
+import jobsRouter from "./routes/jobs";
+import healthRouter from "./routes/health";
+import hotspotsRouter from "./routes/hotspots";
+import musicRouter, { handleMusicWebSocket } from "./routes/music";
+import mediaRouter from "./routes/media";
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? "4000", 10);

@@ -2,9 +2,9 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
 
-import { createJob } from "../lib/job-store.js";
-import { logger } from "../lib/logger.js";
-import { enqueueJob } from "../workers/dispatcher.js";
+import { createJob } from "../lib/job-store";
+import { logger } from "../lib/logger";
+import { enqueueJob } from "../workers/dispatcher";
 
 const router: IRouter = Router();
 

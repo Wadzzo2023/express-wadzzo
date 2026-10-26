@@ -1,11 +1,11 @@
 // src/workers/dispatcher.ts
 
-import type { Job } from "../types/index.js";
-import { markProcessing, markCompleted, markFailed, addLog, getJob } from "../lib/job-store.js";
-import { logger } from "../lib/logger.js";
-import { runAgentJob } from "./agent-worker.js";
-import { runCreatePinsJob } from "./create-pins-worker.js";
-import { runTranscodeJob } from "./transcode-audio-worker.js";
+import type { Job } from "../types/index";
+import { markProcessing, markCompleted, markFailed, addLog, getJob } from "../lib/job-store";
+import { logger } from "../lib/logger";
+import { runAgentJob } from "./agent-worker";
+import { failPinJob, runCreatePinsJob } from "./create-pins-worker";
+import { runTranscodeJob } from "./transcode-audio-worker";
 
 const MAX_CONCURRENT = parseInt(process.env.WORKER_CONCURRENCY ?? "5", 10);
 let running = 0;
@@ -78,6 +78,8 @@ export async function enqueueJob(job: Job): Promise<void> {
             setTimeout(() => void enqueueJob(job), delay);
         } else {
             markFailed(job.id, msg);
+            // A timeout leaves the app's pin job "processing" otherwise.
+            if (job.type === "create_pins") await failPinJob(job, msg);
         }
     } finally {
         releaseSlot();

@@ -1,7 +1,7 @@
 // src/routes/health.ts
 import { Router, type IRouter } from "express";
-import { listJobs } from "../lib/job-store.js";
-import { hotspotScheduler } from "../lib/hotspot-scheduler.js";
+import { listJobs } from "../lib/job-store";
+import { hotspotScheduler } from "../lib/hotspot-scheduler";
 
 const router: IRouter = Router();
 

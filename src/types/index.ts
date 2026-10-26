@@ -1,10 +1,10 @@
 // src/types/index.ts
 
-import { PinOptions } from "../agent/types";
+import type { AgentStep } from "../agent/contract";
 
 export type JobType =
-    | "agent_run"          // main agent pipeline (classify → run → store result)
-    | "create_pins"   // ← add this
+    | "agent_run"          // the map agent answering one message
+    | "create_pins"        // carry out a confirmed bulk pin creation
     | "transcode_audio" // full + 30s preview AAC streams for an asset
     | "generic";           // extensible for future tasks
 
@@ -15,24 +15,8 @@ export type JobStatus =
     | "failed"
     | "cancelled";
 
-export interface JobPayload {
-    // agent_run
-    messages?: { role: string; text: string }[];
-    intent?: Record<string, unknown> | null;
-    pinOptions?: PinOptions;
-    creatorId?: string;
-    pins?: unknown[];
-    loadMore?: boolean;
-    loadMoreOffset?: number;
-    loadMoreType?: string;
-
-    // create_pins
-    jobId?: string;        // locationGroupJob id (only for create_pins)
-    redeemMode?: string;
-
-    // generic
-    [key: string]: unknown;
-}
+/** Job-type specific; each worker validates its own payload. */
+export type JobPayload = Record<string, unknown>;
 
 export interface Job {
     id: string;
@@ -43,6 +27,8 @@ export interface Job {
     result?: unknown;
     error?: string;
     progress?: number;     // 0-100
+    /** What the agent is doing, shown live in the chat (agent_run only). */
+    steps?: AgentStep[];
     log?: LogEntry[];
     createdAt: Date;
     updatedAt: Date;

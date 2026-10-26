@@ -6,18 +6,20 @@ import {
     getJob,
     listJobs,
     cancelJob,
-} from "../lib/job-store.js";
-import { sseSubscribe, sseClientCount } from "../lib/sse.js";
-import { enqueueJob } from "../workers/dispatcher.js";
-import type { AuthenticatedRequest } from "../middleware/auth.js";
-import { logger } from "../lib/logger.js";
+} from "../lib/job-store";
+import { sseSubscribe, sseClientCount } from "../lib/sse";
+import { enqueueJob } from "../workers/dispatcher";
+import type { AuthenticatedRequest } from "../middleware/auth";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
 // ─── Validation schemas ───────────────────────────────────────────────────────
 
+const JOB_TYPES = ["agent_run", "create_pins", "generic"] as const;
+
 const EnqueueSchema = z.object({
-    type: z.enum(["agent_run", "generic"]),
+    type: z.enum(JOB_TYPES),
     creatorId: z.string().min(1),
     payload: z.record(z.unknown()),
     maxAttempts: z.number().int().min(1).max(5).optional(),
@@ -25,7 +27,7 @@ const EnqueueSchema = z.object({
 
 const ListQuerySchema = z.object({
     creatorId: z.string().optional(),
-    type: z.enum(["agent_run", "generic"]).optional(),
+    type: z.enum(JOB_TYPES).optional(),
     status: z.enum(["pending", "processing", "completed", "failed", "cancelled"]).optional(),
     limit: z.coerce.number().int().min(1).max(200).optional(),
     offset: z.coerce.number().int().min(0).optional(),
@@ -166,6 +168,7 @@ function serializeJob(job: ReturnType<typeof getJob>) {
         status: job.status,
         creatorId: job.creatorId,
         progress: job.progress ?? 0,
+        steps: job.steps ?? [],
         result: job.status === "completed" ? job.result : undefined,
         error: job.error,
         attempts: job.attempts,

@@ -4,7 +4,7 @@
 // without polling.
 
 import type { Response } from "express";
-import type { SseProgressEvent } from "../types/index.js";
+import type { SseProgressEvent } from "../types/index";
 
 type SseClient = {
     res: Response;

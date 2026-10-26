@@ -13,12 +13,12 @@ import { mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 
-import type { Job } from "../types/index.js";
-import { db } from "../lib/db.js";
-import { logger } from "../lib/logger.js";
-import { addLog, setProgress } from "../lib/job-store.js";
-import { uploadStreamFile } from "../lib/s3.js";
-import { ffmpeg, fullArgs, previewArgs, previewWindow, probeDuration, stemArgs, streamKeys } from "../lib/transcode.js";
+import type { Job } from "../types/index";
+import { db } from "../lib/db";
+import { logger } from "../lib/logger";
+import { addLog, setProgress } from "../lib/job-store";
+import { uploadStreamFile } from "../lib/s3";
+import { ffmpeg, fullArgs, previewArgs, previewWindow, probeDuration, stemArgs, streamKeys } from "../lib/transcode";
 
 type SourceRow = { mediaUrl: string; demoMediaUrl: string | null; previewStartSec: number };
 type StemRow = { id: number; steamUrl: string; trackIndex: number };

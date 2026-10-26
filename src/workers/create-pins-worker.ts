@@ -1,15 +1,37 @@
 // src/workers/create-pins-worker.ts
-import type { Job } from "../types/index.js";
-import { db } from "../lib/db.js";
-import { randomLocation } from "../lib/map.js";
-import { logger } from "../lib/logger.js";
-import type { Pin, PinOptions } from "../agent/types.js";
-import { enrichPinFromGooglePlace } from "../lib/google-place-enrichment.js";
-import pLimit from "p-limit";
+import type { Job } from "../types/index";
+import { db } from "../lib/db";
+import { randomLocation } from "../lib/map";
+import { logger } from "../lib/logger";
+import { enrichPinFromGooglePlace } from "../lib/google-place-enrichment";
+import pLimit from "../lib/limit";
 
 const ENRICHMENT_CONCURRENCY = 5;
 const DB_WRITE_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY ?? "5", 10);
 const PROGRESS_UPDATE_INTERVAL = 5;
+
+/** One place to pin, as the Bandcoin app sends it after the person confirmed. */
+export interface Pin {
+    id: string;
+    type: string;
+    title: string;
+    description: string;
+    latitude: number;
+    longitude: number;
+    startDate: string;
+    endDate: string;
+    pinCollectionLimit: number;
+    radius: number;
+    url?: string;
+    image?: string;
+    gPlaceId?: string;
+}
+
+export interface PinOptions {
+    autoCollect: boolean;
+    groupingMode: "per-location" | "single-group";
+    pinNumber: number;
+}
 
 interface CreatePinsPayload {
     locationGroupJobId: string;
@@ -71,9 +93,35 @@ async function applyGooglePlaceEnrichment(pin: Pin): Promise<Pin> {
     }
 }
 
+/**
+ * Marks the app's pin job failed (if it's still running), so its progress card
+ * stops waiting. Used when a create_pins job crashes or times out.
+ */
+export async function failPinJob(job: Job, reason: string): Promise<void> {
+    const { locationGroupJobId } = job.payload as { locationGroupJobId?: string };
+    if (!locationGroupJobId) return;
+    await db.locationGroupJob
+        .updateMany({
+            where: { id: locationGroupJobId, creatorId: job.creatorId, status: { in: ["pending", "processing"] } },
+            data: { status: "failed", error: reason },
+        })
+        .catch((err: unknown) => logger.warn(`[create-pins-worker] couldn't mark ${locationGroupJobId} failed: ${String(err)}`));
+}
+
 export async function runCreatePinsJob(job: Job): Promise<unknown> {
+    try {
+        return await createPins(job);
+    } catch (err) {
+        await failPinJob(job, err instanceof Error ? err.message : String(err));
+        throw err;
+    }
+}
+
+async function createPins(job: Job): Promise<unknown> {
     const { locationGroupJobId, creatorId, pins, pinOptions } =
         job.payload as unknown as CreatePinsPayload;
+    if (creatorId !== job.creatorId) throw new Error("create_pins payload is for a different brand than the job");
+    if (!pins?.length) throw new Error("create_pins needs at least one pin");
 
     await db.locationGroupJob.update({
         where: { id: locationGroupJobId },

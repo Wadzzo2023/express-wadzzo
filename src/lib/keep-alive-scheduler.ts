@@ -27,7 +27,7 @@
 // 31, so `*/60` is not a valid two-month step. Stepping the *month* field is.
 
 import cron from "node-cron";
-import { logger } from "./logger.js";
+import { logger } from "./logger";
 
 const APP_URL = process.env.BANDFAN_APP_URL;
 const SECRET = process.env.NEXTAUTH_SECRET;

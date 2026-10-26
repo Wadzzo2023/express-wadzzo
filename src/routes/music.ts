@@ -2,8 +2,8 @@ import { BlockedReason, GoogleGenAI } from "@google/genai";
 import { Router, type IRouter, } from "express";
 import type { Request, Response } from "express";
 import type { WebSocket } from "ws";
-import { logger } from "../lib/logger.js";
-import { db } from "../lib/db.js";
+import { logger } from "../lib/logger";
+import { db } from "../lib/db";
 
 // ── Credit costs per generation type ────────────────────────────────────────
 export const MUSIC_CREDITS = {
